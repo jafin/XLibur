@@ -36,7 +36,7 @@ public static partial class XLHelper
     /// <param name="replaceChar">the char to replace invalid characters.</param>
     /// <returns>a valid string, "empty" if too short, "null" if null</returns>
     // This method was ported and adapted from the POI project at https://github.com/apache/poi/blob/trunk/src/java/org/apache/poi/ss/util/WorkbookUtil.java
-    public static string CreateSafeSheetName(string nameProposal, char replaceChar = ' ')
+    public static string CreateSafeSheetName(string? nameProposal, char replaceChar = ' ')
     {
         if (IllegalWorksheetCharacters.Contains(replaceChar) || replaceChar == '\'')
             throw new ArgumentException("Invalid replacement character.", nameof(replaceChar));

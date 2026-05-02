@@ -79,3 +79,5 @@ XLibur.Excel.XLUsedCellEnumerator.Current.get -> XLibur.Excel.XLUsedCell
 XLibur.Excel.XLUsedCellEnumerator.Dispose() -> void
 XLibur.Excel.XLUsedCellEnumerator.MoveNext() -> bool
 XLibur.Excel.XLUsedCellEnumerator.XLUsedCellEnumerator() -> void
+*REMOVED*static XLibur.Excel.XLHelper.CreateSafeSheetName(string! nameProposal, char replaceChar = ' ') -> string!
+static XLibur.Excel.XLHelper.CreateSafeSheetName(string? nameProposal, char replaceChar = ' ') -> string!
