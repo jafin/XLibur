@@ -7,18 +7,15 @@ namespace XLibur.Extensions;
 
 internal static class EnumerableExtensions
 {
-    public static Type? GetItemType(this IEnumerable source)
+    public static Type? GetItemType(this IEnumerable source) => GetItemType(source.GetType());
+
+    public static Type? GetItemType(Type collectionType)
     {
-        return GetGenericArgument(source.GetType());
+        var ienumerable = collectionType.GetInterfaces()
+            .SingleOrDefault(i => i.GetGenericArguments().Length == 1 &&
+                                  i.Name == "IEnumerable`1");
 
-        Type? GetGenericArgument(Type collectionType)
-        {
-            var ienumerable = collectionType.GetInterfaces()
-                .SingleOrDefault(i => i.GetGenericArguments().Length == 1 &&
-                                      i.Name == "IEnumerable`1");
-
-            return ienumerable?.GetGenericArguments().FirstOrDefault();
-        }
+        return ienumerable?.GetGenericArguments().FirstOrDefault();
     }
 
     extension<T>(IEnumerable<T> source)

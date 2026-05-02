@@ -2,7 +2,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using XLibur.Extensions;
 
 namespace XLibur.Excel.InsertData;
 
@@ -11,10 +10,11 @@ internal sealed class SimpleNullableTypeReader : IInsertDataReader
     private readonly IEnumerable<object> _data;
     private readonly Type _itemType;
 
-    public SimpleNullableTypeReader(IEnumerable data)
+    public SimpleNullableTypeReader(IEnumerable data, Type underlyingItemType)
     {
-        _data = data?.Cast<object>() ?? throw new ArgumentNullException(nameof(data));
-        _itemType = data.GetItemType()!.GetUnderlyingType();
+        ArgumentNullException.ThrowIfNull(data);
+        _itemType = underlyingItemType;
+        _data = data.Cast<object>();
     }
 
     public IEnumerable<IEnumerable<XLCellValue>> GetRecords()

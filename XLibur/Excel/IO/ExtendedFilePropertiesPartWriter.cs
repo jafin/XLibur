@@ -30,11 +30,10 @@ internal static class ExtendedFilePropertiesPartWriter
 
     private static void EnsureNamespaceDeclaration(Properties properties)
     {
-        if (!properties.NamespaceDeclarations.Contains(new KeyValuePair<string, string>("vt",
-                "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes")))
+        const string vtNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes";
+        if (!properties.NamespaceDeclarations.Any(nd => nd is { Key: "vt", Value: vtNamespace }))
         {
-            properties.AddNamespaceDeclaration("vt",
-                "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes");
+            properties.AddNamespaceDeclaration("vt", vtNamespace);
         }
     }
 

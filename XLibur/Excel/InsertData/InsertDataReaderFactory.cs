@@ -17,14 +17,14 @@ internal sealed class InsertDataReaderFactory
     {
         ArgumentNullException.ThrowIfNull(data);
 
-        var itemType = data.GetItemType();
+        var itemType = EnumerableExtensions.GetItemType(data.GetType());
 
         if (itemType == null || itemType == typeof(object))
             return new UntypedObjectReader(data);
         if (itemType.IsNullableType() && itemType.GetUnderlyingType().IsSimpleType())
-            return new SimpleNullableTypeReader(data);
+            return new SimpleNullableTypeReader(data, itemType.GetUnderlyingType());
         if (itemType.IsSimpleType())
-            return new SimpleTypeReader(data);
+            return new SimpleTypeReader(data, itemType);
         if (typeof(IDataRecord).IsAssignableFrom(itemType))
             return new DataRecordReader(data.OfType<IDataRecord>());
         if (itemType.IsArray || typeof(IEnumerable).IsAssignableFrom(itemType))
@@ -32,7 +32,7 @@ internal sealed class InsertDataReaderFactory
         if (itemType == typeof(DataRow))
             return new DataTableReader(data.Cast<DataRow>());
 
-        return new ObjectReader(data);
+        return new ObjectReader(data, itemType);
     }
 
     public static IInsertDataReader CreateReader<T>(IEnumerable<T[]> data)
@@ -45,7 +45,7 @@ internal sealed class InsertDataReaderFactory
         ArgumentNullException.ThrowIfNull(data);
 
         if (data.GetType().GetElementType() == typeof(string))
-            return new SimpleTypeReader(data);
+            return new SimpleTypeReader(data, typeof(string));
 
         return new ArrayReader(data);
     }

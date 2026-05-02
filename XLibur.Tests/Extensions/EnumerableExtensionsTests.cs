@@ -35,17 +35,17 @@ public class EnumerableExtensionsTests
         var anonymousIterator = new List<TablesTests.TestObjectWithoutAttributes>()
             .Select(o => new { FirstName = o.Column1, LastName = o.Column2 });
 
-        //expectedType can be something like <>f__AnonymousType9`2[System.String,System.String]
-        //but since that `9` may differ with new anonymous types declare in the assembly
-        //check the beginning and the ending of the actual type
-        var expectedTypeStart = "<>f__AnonymousType";
-        var expectedTypeEnd = "`2[System.String,System.String]";
-        var actualType = anonymousIterator.GetItemType().ToString();
-        Assert.True(actualType.StartsWith(expectedTypeStart));
-        Assert.True(actualType.EndsWith(expectedTypeEnd));
+        // expectedType is something like <>f__AnonymousType9`2[System.String,System.String], but
+        // the `9` differs as new anonymous types are declared in the assembly — match only the ends.
+        AssertAnonymousItemType(anonymousIterator);
+        AssertAnonymousItemType((IEnumerable<object>)anonymousIterator);
+    }
 
-        IEnumerable<object> obj = anonymousIterator;
-        actualType = obj.GetItemType().ToString();
+    private static void AssertAnonymousItemType(IEnumerable source)
+    {
+        const string expectedTypeStart = "<>f__AnonymousType";
+        const string expectedTypeEnd = "`2[System.String,System.String]";
+        var actualType = source.GetItemType()!.ToString();
         Assert.True(actualType.StartsWith(expectedTypeStart));
         Assert.True(actualType.EndsWith(expectedTypeEnd));
     }

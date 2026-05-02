@@ -103,9 +103,10 @@ public class ConditionalFormatTests
             var conditionalFormatValues = ws.ConditionalFormats
                 .SelectMany(cf => cf.Values.Values)
                 .Select(v => v.Value)
-                .Distinct();
+                .Distinct()
+                .ToList();
 
-            Assert.AreEqual(1, conditionalFormatValues.Count());
+            Assert.AreEqual(1, conditionalFormatValues.Count);
             Assert.AreEqual("1.5", conditionalFormatValues.Single());
         }
     }

@@ -18,14 +18,14 @@ internal sealed class ObjectReader : IInsertDataReader
     private readonly MemberInfo[] _members;
     private readonly bool[] _staticMembers;
 
-    public ObjectReader(IEnumerable data)
+    public ObjectReader(IEnumerable data, Type itemType)
     {
-        _data = data.Cast<object>();
+        ArgumentNullException.ThrowIfNull(data);
 
-        var itemType = data.GetItemType()!;
         if (itemType.IsNullableType())
             itemType = itemType.GetUnderlyingType();
 
+        _data = data.Cast<object>();
         _members = itemType.GetFields(MemberBindingFlags).Cast<MemberInfo>()
             .Concat(itemType.GetProperties(MemberBindingFlags).Where(pi => pi.GetIndexParameters().Length == 0))
             .Where(mi => !XLColumnAttribute.IgnoreMember(mi))
@@ -45,7 +45,7 @@ internal sealed class ObjectReader : IInsertDataReader
         return _members.Length;
     }
 
-    public string? GetPropertyName(int propertyIndex)
+    public string GetPropertyName(int propertyIndex)
     {
         if (propertyIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(propertyIndex), "Property index must be non-negative");

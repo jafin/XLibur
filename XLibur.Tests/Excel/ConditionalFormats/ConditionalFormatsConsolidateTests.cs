@@ -177,7 +177,7 @@ public class ConditionalFormatsConsolidateTests
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add("Sheet");
 
-        var ranges = ws.Ranges("B3:B8,C3:C4,A3:A4,C5:C8,A5:A8").Cast<XLRange>();
+        var ranges = ws.Ranges("B3:B8,C3:C4,A3:A4,C5:C8,A5:A8").Cast<XLRange>().ToList();
         var cf1 = new XLConditionalFormat(ranges);
         cf1.ColorScale()
             .LowestValue(XLColor.Red)

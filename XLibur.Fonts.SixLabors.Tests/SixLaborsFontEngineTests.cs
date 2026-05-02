@@ -391,13 +391,13 @@ public class SixLaborsFontEngineTests
     [Test]
     public void Constructor_ThrowsOnNullFallbackFont()
     {
-        Assert.Throws<ArgumentException>(() => new SixLaborsFontEngine(null!));
+        Assert.Throws<ArgumentException>(() => _ = new SixLaborsFontEngine(null!));
     }
 
     [Test]
     public void Constructor_ThrowsOnWhitespaceFallbackFont()
     {
-        Assert.Throws<ArgumentException>(() => new SixLaborsFontEngine("   "));
+        Assert.Throws<ArgumentException>(() => _ = new SixLaborsFontEngine("   "));
     }
 
     [Test]

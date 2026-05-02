@@ -15,12 +15,10 @@ internal static class WorkbookPartWriter
         workbookPart.Workbook ??= new Workbook();
 
         var workbook = workbookPart.Workbook;
-        if (
-            !workbook.NamespaceDeclarations.Contains(new KeyValuePair<string, string>("r",
-                "http://schemas.openxmlformats.org/officeDocument/2006/relationships")))
+        const string relationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        if (!workbook.NamespaceDeclarations.Any(nd => nd is { Key: "r", Value: relationshipsNamespace }))
         {
-            workbook.AddNamespaceDeclaration("r",
-                "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+            workbook.AddNamespaceDeclaration("r", relationshipsNamespace);
         }
 
         WriteWorkbookProperties(workbook, xlWorkbook, options);
@@ -37,7 +35,7 @@ internal static class WorkbookPartWriter
         UpdateExistingSheets(workbook, xlWorkbook);
         AppendNewSheets(workbook, xlWorkbook, context);
 
-        var (_, firstSheetVisible) = ReorderSheets(workbook, xlWorkbook);
+        var firstSheetVisible = ReorderSheets(workbook, xlWorkbook);
 
         WriteWorkbookView(workbook, xlWorkbook, worksheets, firstSheetVisible);
 
@@ -154,18 +152,18 @@ internal static class WorkbookPartWriter
         }
     }
 
-    private static (IEnumerable<Sheet> sheetElements, uint firstSheetVisible) ReorderSheets(Workbook workbook, XLWorkbook xlWorkbook)
+    private static uint ReorderSheets(Workbook workbook, XLWorkbook xlWorkbook)
     {
-        var sheetElements = from sheet in workbook.Sheets!.Elements<Sheet>()
-                            join worksheet in ((IEnumerable<XLWorksheet>)xlWorkbook.WorksheetsInternal) on sheet.Id!.Value
-                                equals worksheet.RelId
-                            orderby worksheet.Position
-                            select sheet;
+        var sheetElements = (from sheet in workbook.Sheets!.Elements<Sheet>()
+                             join worksheet in ((IEnumerable<XLWorksheet>)xlWorkbook.WorksheetsInternal) on sheet.Id!.Value
+                                 equals worksheet.RelId
+                             orderby worksheet.Position
+                             select sheet).ToList();
 
         uint firstSheetVisible = 0;
         var foundVisible = false;
 
-        var totalSheets = sheetElements.Count() + xlWorkbook.UnsupportedSheets.Count;
+        var totalSheets = sheetElements.Count + xlWorkbook.UnsupportedSheets.Count;
         for (var p = 1; p <= totalSheets; p++)
         {
             if (xlWorkbook.UnsupportedSheets.All(us => us.Position != p))
@@ -174,7 +172,7 @@ internal static class WorkbookPartWriter
                 ReorderUnsupportedSheet(workbook, xlWorkbook, p);
         }
 
-        return (sheetElements, firstSheetVisible);
+        return firstSheetVisible;
     }
 
     private static void ReorderSupportedSheet(
@@ -210,44 +208,42 @@ internal static class WorkbookPartWriter
     private static void WriteWorkbookView(Workbook workbook, XLWorkbook xlWorkbook, XLWorksheets worksheets,
         uint firstSheetVisible)
     {
+        var activeTab = ResolveActiveTab(xlWorkbook, worksheets, firstSheetVisible);
+
         var workbookView = workbook.BookViews!.Elements<WorkbookView>().FirstOrDefault();
-
-        var activeTab =
-            (from us in xlWorkbook.UnsupportedSheets where us.IsActive select (uint)us.Position - 1).FirstOrDefault();
-
-        if (activeTab == 0)
-        {
-            uint? firstActiveTab = null;
-            uint? firstSelectedTab = null;
-            foreach (var ws in worksheets)
-            {
-                if (ws.TabActive)
-                {
-                    firstActiveTab = (uint)(ws.Position - 1);
-                    break;
-                }
-
-                if (ws.TabSelected)
-                {
-                    firstSelectedTab = (uint)(ws.Position - 1);
-                }
-            }
-
-            activeTab = firstActiveTab
-                        ?? firstSelectedTab
-                        ?? firstSheetVisible;
-        }
-
         if (workbookView == null)
         {
-            workbookView = new WorkbookView { ActiveTab = activeTab, FirstSheet = firstSheetVisible };
+            workbookView = new WorkbookView();
             workbook.BookViews.AppendChild(workbookView);
         }
-        else
+
+        workbookView.ActiveTab = activeTab;
+        workbookView.FirstSheet = firstSheetVisible;
+    }
+
+    private static uint ResolveActiveTab(XLWorkbook xlWorkbook, XLWorksheets worksheets, uint firstSheetVisible)
+    {
+        var unsupportedActiveTab =
+            (from us in xlWorkbook.UnsupportedSheets where us.IsActive select (uint)us.Position - 1).FirstOrDefault();
+
+        if (unsupportedActiveTab != 0)
+            return unsupportedActiveTab;
+
+        return FindFirstActiveOrSelectedTab(worksheets) ?? firstSheetVisible;
+    }
+
+    private static uint? FindFirstActiveOrSelectedTab(XLWorksheets worksheets)
+    {
+        uint? lastSelectedTab = null;
+        foreach (var ws in worksheets)
         {
-            workbookView.ActiveTab = activeTab;
-            workbookView.FirstSheet = firstSheetVisible;
+            if (ws.TabActive)
+                return (uint)(ws.Position - 1);
+
+            if (ws.TabSelected)
+                lastSelectedTab = (uint)(ws.Position - 1);
         }
+        return lastSelectedTab;
     }
 
     private static DefinedNames BuildDefinedNames(Workbook workbook, XLWorkbook xlWorkbook)
@@ -257,7 +253,7 @@ internal static class WorkbookPartWriter
         {
             var wsSheetId = worksheet.SheetId;
             uint sheetId = 0;
-            foreach (var s in workbook.Sheets!.Elements<Sheet>().TakeWhile(s => s.SheetId! != wsSheetId))
+            foreach (var unused in workbook.Sheets!.Elements<Sheet>().TakeWhile(s => s.SheetId! != wsSheetId))
             {
                 sheetId++;
             }

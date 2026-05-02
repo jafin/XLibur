@@ -885,10 +885,11 @@ internal static class ChartWriter
 
     private static void AppendAnchor(Xdr.WorksheetDrawing worksheetDrawing, XLChart xlChart, A.GraphicData graphicData)
     {
-        var nvps = worksheetDrawing.Descendants<Xdr.NonVisualDrawingProperties>();
-        var nvpId = nvps.Any()
-            ? (UInt32Value)nvps.Max(p => p.Id!.Value) + 1
-            : 1U;
+        var nvpId = (UInt32Value)(worksheetDrawing
+            .Descendants<Xdr.NonVisualDrawingProperties>()
+            .Select(p => p.Id!.Value)
+            .DefaultIfEmpty()
+            .Max() + 1);
 
         var fromPos = xlChart.Position;
         var toPos = xlChart.SecondPosition;
@@ -930,10 +931,11 @@ internal static class ChartWriter
     /// </summary>
     private static void AppendExtendedAnchor(Xdr.WorksheetDrawing worksheetDrawing, XLChart xlChart, string chartRelId)
     {
-        var nvps = worksheetDrawing.Descendants<Xdr.NonVisualDrawingProperties>();
-        var nvpId = nvps.Any()
-            ? (UInt32Value)nvps.Max(p => p.Id!.Value) + 1
-            : 1U;
+        var nvpId = (UInt32Value)(worksheetDrawing
+            .Descendants<Xdr.NonVisualDrawingProperties>()
+            .Select(p => p.Id!.Value)
+            .DefaultIfEmpty()
+            .Max() + 1);
 
         var chartName = string.IsNullOrEmpty(xlChart.Name) ? $"Chart {nvpId}" : xlChart.Name;
         var fromPos = xlChart.Position;
