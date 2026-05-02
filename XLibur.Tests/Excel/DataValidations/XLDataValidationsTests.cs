@@ -10,7 +10,7 @@ public class XLDataValidationsTests
     [Test]
     public void CannotCreateWithoutWorksheet()
     {
-        Assert.Throws<ArgumentNullException>(() => new XLDataValidations(null));
+        Assert.Throws<ArgumentNullException>(() => _ = new XLDataValidations(null));
     }
 
     [Test]

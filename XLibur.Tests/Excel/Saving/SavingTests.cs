@@ -121,7 +121,7 @@ public class SavingTests
 
                 using var wb = new XLWorkbook();
                 var memoryStream = new MemoryStream();
-                var ws = wb.Worksheets.Add("Sheet1");
+                wb.Worksheets.Add("Sheet1");
 
                 wb.SaveAs(memoryStream, true);
 
@@ -196,7 +196,7 @@ public class SavingTests
             // Arrange
             using (var wb = new XLWorkbook())
             {
-                var sheet = wb.Worksheets.Add("TestSheet");
+                wb.Worksheets.Add("TestSheet");
                 wb.SaveAs(original.Path);
             }
             File.SetAttributes(original.Path, FileAttributes.ReadOnly);
@@ -228,7 +228,7 @@ public class SavingTests
         // Act
         using (var wb = new XLWorkbook())
         {
-            var sheet = wb.Worksheets.Add("TestSheet");
+            wb.Worksheets.Add("TestSheet");
             wb.SaveAs(existing.Path);
         }
 
@@ -252,7 +252,7 @@ public class SavingTests
             TestDelegate saveAs = () =>
             {
                 using var wb = new XLWorkbook();
-                var sheet = wb.Worksheets.Add("TestSheet");
+                wb.Worksheets.Add("TestSheet");
                 wb.SaveAs(existing.Path);
             };
 
@@ -612,7 +612,7 @@ public class SavingTests
             var wb = new XLWorkbook();
             var ws = wb.AddWorksheet();
 
-            var longText = string.Join(" ", Enumerable.Range(0, 40).Select(i => "1234567890"));
+            var longText = string.Join(" ", Enumerable.Range(0, 40).Select(_ => "1234567890"));
 
             var data = new[]
             {
@@ -789,12 +789,12 @@ public class SavingTests
 
             using var workbook2 = new XLWorkbook(filename2);
             var ws = workbook2.Worksheet("UI Sheet");
-            var B2 = ws.Cell("B2");
-            Assert.AreEqual(XLAllowedValues.List, B2.GetDataValidation().AllowedValues);
-            Assert.AreEqual("$E$1:$E$4", B2.GetDataValidation().Value);
-            var A2 = ws.Cell("A2");
-            Assert.AreEqual(XLAllowedValues.List, A2.GetDataValidation().AllowedValues);
-            Assert.AreEqual("ValuesSheet!$A$1:$A$4", A2.GetDataValidation().Value);
+            var b2 = ws.Cell("B2");
+            Assert.AreEqual(XLAllowedValues.List, b2.GetDataValidation().AllowedValues);
+            Assert.AreEqual("$E$1:$E$4", b2.GetDataValidation().Value);
+            var a2 = ws.Cell("A2");
+            Assert.AreEqual(XLAllowedValues.List, a2.GetDataValidation().AllowedValues);
+            Assert.AreEqual("ValuesSheet!$A$1:$A$4", a2.GetDataValidation().Value);
         }
         finally
         {

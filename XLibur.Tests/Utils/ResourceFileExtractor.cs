@@ -15,7 +15,7 @@ public sealed class ResourceFileExtractor
 
     #region Private fields
 
-    private static readonly IDictionary<string, ResourceFileExtractor> extractors =
+    private static readonly IDictionary<string, ResourceFileExtractor> Extractors =
         new ConcurrentDictionary<string, ResourceFileExtractor>();
 
     #endregion Private fields
@@ -29,10 +29,10 @@ public sealed class ResourceFileExtractor
         {
             var assembly = Assembly.GetCallingAssembly();
             var key = assembly.GetName().FullName;
-            if (extractors.TryGetValue(key, out var extractor)
-                || extractors.TryGetValue(key, out extractor)) return extractor;
+            if (Extractors.TryGetValue(key, out var extractor)
+                || Extractors.TryGetValue(key, out extractor)) return extractor;
             extractor = new ResourceFileExtractor(assembly, true, null);
-            extractors.Add(key, extractor);
+            Extractors.Add(key, extractor);
 
             return extractor;
         }
@@ -150,9 +150,9 @@ public sealed class ResourceFileExtractor
 
     public bool IsStatic { get; set; }
 
-    public IEnumerable<string> GetFileNames(Func<String, Boolean> predicate = null)
+    public IEnumerable<string> GetFileNames(Func<string, bool> predicate = null)
     {
-        predicate ??= (s => true);
+        predicate ??= (_ => true);
 
         var path = AssemblyName + ResourceFilePath;
         foreach (var resourceName in Assembly.GetManifestResourceNames())

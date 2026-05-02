@@ -293,7 +293,7 @@ public class DataValidationTests
     [Test]
     public void CannotCreateDataValidationWithoutRange()
     {
-        Assert.Throws<ArgumentNullException>(() => new XLDataValidation(null));
+        Assert.Throws<ArgumentNullException>(() => _ = new XLDataValidation(null));
     }
 
     [Test]

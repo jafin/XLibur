@@ -10,7 +10,7 @@ namespace XLibur.Benchmarks;
 [MemoryDiagnoser]
 public class XLiburReadBenchmarks
 {
-    private const int RowCount = 250_000;
+    private const int RowCount = 100_000;
     private const int ColCount = 15;
 
     private byte[] _fileBytes = null!;

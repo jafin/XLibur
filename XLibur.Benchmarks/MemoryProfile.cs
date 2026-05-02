@@ -21,7 +21,7 @@ namespace XLibur.Benchmarks;
 /// </summary>
 public static class MemoryProfile
 {
-    private const int RowCount = 250_000;
+    private const int RowCount = 100_000;
     private const int ColCount = 15;
 
     public static void Run(string[] args)

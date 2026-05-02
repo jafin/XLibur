@@ -21,17 +21,18 @@ public class ColorTests
     [Test]
     public void ColorNotEqualOperatorInPlace()
     {
+        // ReSharper disable once EqualExpressionComparison
         Assert.IsFalse(XLColor.Black != XLColor.Black);
     }
 
     [Test]
-    public void ColorNamedVsHTML()
+    public void ColorNamedVsHtml()
     {
         Assert.IsTrue(XLColor.Black == XLColor.FromHtml("#000000"));
     }
 
     [Test]
-    public void DefaultColorIndex64isTransparentWhite()
+    public void DefaultColorIndex64IsTransparentWhite()
     {
         var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Sheet1");
