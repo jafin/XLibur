@@ -1,5 +1,4 @@
 ﻿using XLibur.Excel;
-using XLibur.Fonts.SixLabors;
 
 namespace XLibur.Fonts.SixLabors.Examples.FontEngine;
 

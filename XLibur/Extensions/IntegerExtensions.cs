@@ -31,7 +31,7 @@ internal static class IntegerExtensions
         }
 
         /// <summary>
-        /// Get index of lowest set bit &gt;= to <paramref name="minimalIndex"/> or -1 if no such bit.
+        /// Get index of the lowest set bit &gt;= to <paramref name="minimalIndex"/> or -1 if no such bit.
         /// </summary>
         internal int GetLowestSetBitAbove(int minimalIndex)
         {

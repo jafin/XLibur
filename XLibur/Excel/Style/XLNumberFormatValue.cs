@@ -25,7 +25,7 @@ internal sealed class XLNumberFormatValue
     public XLNumberFormatKey Key { get; private set; }
 
     /// <summary>
-    /// Id of the number format. Every workbook has <see cref="XLConstants.NumberOfBuiltInStyles"/>
+    /// ID of the number format. Every workbook has <see cref="XLConstants.NumberOfBuiltInStyles"/>
     /// built-int formats that start at 0 (<em>General</em> format). The built-int formats are
     /// not explicitly written and might differ depending on culture. Custom number formats
     /// have a valid <see cref="Format"/> and the id is <c>-1</c>.

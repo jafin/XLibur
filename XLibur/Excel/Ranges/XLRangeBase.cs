@@ -1264,7 +1264,7 @@ internal abstract class XLRangeBase : XLStylizedBase, IXLRangeBase, IXLStylized
     public IXLDataValidation SetDataValidation()
     {
         var existingValidation = GetDataValidation();
-        if (existingValidation != null && existingValidation.Ranges.Any(r => r == this))
+        if (existingValidation != null && existingValidation.Ranges.Any(r => Equals(r, this)))
             return existingValidation;
 
         var dataValidationToCopy = Worksheet.DataValidations.GetAllInRange(RangeAddress)

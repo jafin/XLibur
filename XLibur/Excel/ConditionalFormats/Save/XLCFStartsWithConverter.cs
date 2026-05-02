@@ -6,7 +6,7 @@ internal sealed class XLCFStartsWithConverter : IXLCFConverter
 {
     public ConditionalFormattingRule Convert(IXLConditionalFormat cf, int priority, XLWorkbook.SaveContext context)
     {
-        string? val = cf.Values[1].Value;
+        var val = cf.Values[1].Value;
         var conditionalFormattingRule = XLCFBaseConverter.Convert(cf, priority);
         var cfStyle = ((XLStyle)cf.Style).Value;
         if (!cfStyle.Equals(XLWorkbook.DefaultStyleValue))

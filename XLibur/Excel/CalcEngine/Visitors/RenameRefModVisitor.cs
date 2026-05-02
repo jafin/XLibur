@@ -37,7 +37,7 @@ internal sealed class RenameRefModVisitor : RefModVisitor
         return sheetName;
     }
 
-    protected override string? ModifyTable(ModContext ctx, string table)
+    protected override string ModifyTable(ModContext ctx, string table)
     {
         if (_tables is not null && _tables.TryGetValue(table, out var newName))
             return newName;

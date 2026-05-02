@@ -86,7 +86,7 @@ internal sealed class XLRow : XLRangeBase, IXLRow
 
     /// <summary>
     /// Should cells in the row display phonetic? This doesn't actually affect whether the phonetic are
-    /// shown in the row, that depends entirely on the <see cref="IXLCell.ShowPhonetic"/> property
+    /// shown in the row; that depends entirely on the <see cref="IXLCell.ShowPhonetic"/> property
     /// of a cell. This property determines whether a new cell in the row will have its phonetic turned on
     /// (and also the state of the "Show or hide phonetic" in Excel when the whole row is selected).
     /// Default is <c>false</c>.

@@ -15,8 +15,8 @@ internal class XLRepositoryBase<Tkey, Tvalue> : XLRepositoryBase, IXLRepository<
     where Tkey : struct, IEquatable<Tkey>
     where Tvalue : class
 {
-    const int CONCURRENCY_LEVEL = 4;
-    const int INITIAL_CAPACITY = 1000;
+    private const int ConcurrencyLevel = 4;
+    private const int InitialCapacity = 1000;
 
     private readonly ConcurrentDictionary<Tkey, WeakReference> _storage;
     private readonly Func<Tkey, Tvalue> _createNew;
@@ -28,7 +28,7 @@ internal class XLRepositoryBase<Tkey, Tvalue> : XLRepositoryBase, IXLRepository<
 
     internal XLRepositoryBase(Func<Tkey, Tvalue> createNew, IEqualityComparer<Tkey> comparer)
     {
-        _storage = new ConcurrentDictionary<Tkey, WeakReference>(CONCURRENCY_LEVEL, INITIAL_CAPACITY, comparer);
+        _storage = new ConcurrentDictionary<Tkey, WeakReference>(ConcurrencyLevel, InitialCapacity, comparer);
         _createNew = createNew;
     }
 
@@ -66,7 +66,7 @@ internal class XLRepositoryBase<Tkey, Tvalue> : XLRepositoryBase, IXLRepository<
 
         do
         {
-            if (_storage.TryGetValue(key, out WeakReference? cachedReference) &&
+            if (_storage.TryGetValue(key, out var cachedReference) &&
                 cachedReference.Target is Tvalue storedValue)
             {
                 return storedValue;
@@ -78,13 +78,13 @@ internal class XLRepositoryBase<Tkey, Tvalue> : XLRepositoryBase, IXLRepository<
 
     public Tvalue GetOrCreate(ref Tkey key)
     {
-        if (_storage.TryGetValue(key, out WeakReference? cachedReference) &&
+        if (_storage.TryGetValue(key, out var cachedReference) &&
             cachedReference.Target is Tvalue storedValue)
         {
             return storedValue;
         }
 
-        _storage.TryRemove(key, out WeakReference? _);
+        _storage.TryRemove(key, out _);
         var value = _createNew(key);
         return Store(ref key, value)!;
     }

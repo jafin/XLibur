@@ -88,8 +88,8 @@ internal static class XLRangeSetOperationsHelper
         if (!range.Worksheet.Equals(otherRange.Worksheet))
             return cells;
 
-        thisRangePredicate ??= c => true;
-        otherRangePredicate ??= c => true;
+        thisRangePredicate ??= _ => true;
+        otherRangePredicate ??= _ => true;
 
         range.Cells(thisRangePredicate).Concat(otherRange.Cells(otherRangePredicate)).Distinct().ForEach(c => cells.Add((XLCell)c));
         return cells;

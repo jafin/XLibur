@@ -152,7 +152,7 @@ internal sealed class XLAutoFilter : IXLAutoFilter
         foreach (var filterColumn in _columns.Values)
             filterColumn.Clear(false);
 
-        foreach (IXLRangeRow row in Range.Rows().Where(r => r.RowNumber() > 1))
+        foreach (var row in Range.Rows().Where(r => r.RowNumber() > 1))
             row.WorksheetRow().Unhide();
         return this;
     }

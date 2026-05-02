@@ -14,7 +14,7 @@ internal static class ReferenceAreaExtensions
     /// Convert an area to an absolute sheet range (regardless if the area is A1 or R1C1).
     /// </summary>
     /// <param name="area">Area to convert</param>
-    /// <param name="anchor">An anchor address that is the centre of R1C1 relative address.</param>
+    /// <param name="anchor">An anchor address that is the center of R1C1 relative address.</param>
     /// <returns>Converted absolute range.</returns>
     public static XLSheetRange ToSheetRange(this ReferenceArea area, XLSheetPoint anchor)
     {
@@ -34,8 +34,8 @@ internal static class ReferenceAreaExtensions
             col2 = R1C1ToPosition(area.Second.ColumnType, area.Second.ColumnValue, anchor.Column, XLHelper.MaxColumnNumber, XLHelper.MaxColumnNumber);
         }
 
-        // Points in the token `area` don't have to be in top left and bottom right corners,
-        // e.g. D4:A1 or D1:A4. Normalize coordinates, so the sheet range has expected corners.
+        // Points in the token `area` don't have to be in the top left and bottom right corners,
+        // e.g., D4:A1 or D1:A4. Normalize coordinates, so the sheet range has expected corners.
         var colStart = Math.Min(col1, col2);
         var colEnd = Math.Max(col1, col2);
         var rowStart = Math.Min(row1, row2);
@@ -49,7 +49,7 @@ internal static class ReferenceAreaExtensions
         {
             ReferenceAxisType.Absolute => position, // $A$1 => R1C1
             ReferenceAxisType.Relative => position, // A1 => R1C1
-            ReferenceAxisType.None => defaultPosition, // Only other axis specified, e.g. A:B doesn't have row.
+            ReferenceAxisType.None => defaultPosition, // Only another axis specified, e.g., A:B doesn't have a row.
             _ => throw new NotSupportedException()
         };
     }
@@ -74,7 +74,7 @@ internal static class ReferenceAreaExtensions
                 }
 
             case ReferenceAxisType.None:
-                return defaultPosition; // another axis specified, e.g. R3:R5 doesn't have a row.
+                return defaultPosition; // another axis specified, e.g., R3:R5 doesn't have a row.
 
             default:
                 throw new NotSupportedException();

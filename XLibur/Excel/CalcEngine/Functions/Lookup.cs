@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.RegularExpressions;
 using XLibur.Excel.Coordinates;
 using static XLibur.Excel.CalcEngine.Functions.SignatureAdapter;

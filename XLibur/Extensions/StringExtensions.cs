@@ -162,7 +162,7 @@ internal static partial class StringExtensions
 
     /// <summary>
     /// Does the name start with a pattern that could be confused with a cell reference?
-    /// E.g. "C05A" starts with column "C" followed by digit "0", which is ambiguous
+    /// E.g. "C05A" starts with the column "C" followed by the digit "0", which is ambiguous
     /// to Excel's formula parser even though "C05A" isn't a complete valid A1 address.
     /// </summary>
     private static bool StartsLikeCellReference(string name)
@@ -172,8 +172,8 @@ internal static partial class StringExtensions
             i++;
 
         // 1-3 letters followed by at least one digit, where the letters form a valid column
-        return i >= 1 && i <= 3 && i < name.Length && char.IsDigit(name[i])
-            && XLHelper.IsValidColumn(name[..i]);
+        return i is >= 1 and <= 3 && i < name.Length && char.IsDigit(name[i])
+               && XLHelper.IsValidColumn(name[..i]);
     }
 
     [GeneratedRegex(@"((?<!\r)\n|\r\n)", RegexOptions.Compiled)]
