@@ -15,35 +15,35 @@ internal static class OpenXmlHelper
     #region Public Methods
 
     /// <summary>
-    /// Convert color in XLibur representation to specified OpenXML type.
+    /// Convert color in XLibur representation to a specified OpenXML type.
     /// </summary>
     /// <typeparam name="T">The descendant of <see cref="ColorType"/>.</typeparam>
-    /// <param name="openXMLColor">The existing instance of ColorType.</param>
+    /// <param name="openXmlColor">The existing instance of ColorType.</param>
     /// <param name="xlColor">Color in XLibur format.</param>
     /// <param name="isDifferential">Flag specifying that the color should be saved in
     /// differential format (affects the transparent color processing).</param>
     /// <returns>The original color in OpenXML format.</returns>
-    public static T FromXLiburColor<T>(this ColorType openXMLColor, XLColor xlColor, bool isDifferential = false)
+    public static T FromXLiburColor<T>(this ColorType openXmlColor, XLColor xlColor, bool isDifferential = false)
         where T : ColorType
     {
-        var adapter = new ColorTypeAdapter(openXMLColor);
+        var adapter = new ColorTypeAdapter(openXmlColor);
         FillFromXLiburColor(adapter, xlColor, isDifferential);
         return (T)adapter.ColorType;
     }
 
     /// <summary>
-    /// Convert color in XLibur representation to specified OpenXML type.
+    /// Convert color in XLibur representation to a specified OpenXML type.
     /// </summary>
     /// <typeparam name="T">The descendant of <see cref="X14.ColorType"/>.</typeparam>
-    /// <param name="openXMLColor">The existing instance of ColorType.</param>
+    /// <param name="openXmlColor">The existing instance of ColorType.</param>
     /// <param name="xlColor">Color in XLibur format.</param>
     /// <param name="isDifferential">Flag specifying that the color should be saved in
     /// differential format (affects the transparent color processing).</param>
     /// <returns>The original color in OpenXML format.</returns>
-    public static T FromXLiburColor<T>(this X14.ColorType openXMLColor, XLColor xlColor, bool isDifferential = false)
+    public static T FromXLiburColor<T>(this X14.ColorType openXmlColor, XLColor xlColor, bool isDifferential = false)
         where T : X14.ColorType
     {
-        var adapter = new X14ColorTypeAdapter(openXMLColor);
+        var adapter = new X14ColorTypeAdapter(openXmlColor);
         FillFromXLiburColor(adapter, xlColor, isDifferential);
         return (T)adapter.ColorType;
     }
@@ -61,21 +61,21 @@ internal static class OpenXmlHelper
     /// <summary>
     /// Convert color in OpenXML representation to XLibur type.
     /// </summary>
-    /// <param name="openXMLColor">Color in OpenXML format.</param>
+    /// <param name="openXmlColor">Color in OpenXML format.</param>
     /// <returns>The color in XLibur format.</returns>
-    public static XLColor ToXLiburColor(this ColorType openXMLColor)
+    public static XLColor ToXLiburColor(this ColorType openXmlColor)
     {
-        return ConvertToXLiburColor(new ColorTypeAdapter(openXMLColor));
+        return ConvertToXLiburColor(new ColorTypeAdapter(openXmlColor));
     }
 
     /// <summary>
     /// Convert color in OpenXML representation to XLibur type.
     /// </summary>
-    /// <param name="openXMLColor">Color in OpenXML format.</param>
+    /// <param name="openXmlColor">Color in OpenXML format.</param>
     /// <returns>The color in XLibur format.</returns>
-    public static XLColor ToXLiburColor(this X14.ColorType openXMLColor)
+    public static XLColor ToXLiburColor(this X14.ColorType openXmlColor)
     {
-        return ConvertToXLiburColor(new X14ColorTypeAdapter(openXMLColor));
+        return ConvertToXLiburColor(new X14ColorTypeAdapter(openXmlColor));
     }
 
     internal static void LoadNumberFormat(NumberingFormat? nfSource, IXLNumberFormat nf)
@@ -129,7 +129,8 @@ internal static class OpenXmlHelper
         LoadBorderValues(borderSource.BottomBorder, border.SetBottomBorder, border.SetBottomBorderColor);
     }
 
-    private static void LoadBorderValues(BorderPropertiesType? source, Func<XLBorderStyleValues, IXLStyle> setBorder, Func<XLColor, IXLStyle> setColor)
+    private static void LoadBorderValues(BorderPropertiesType? source, Func<XLBorderStyleValues, IXLStyle> setBorder,
+        Func<XLColor, IXLStyle> setColor)
     {
         if (source != null)
         {
@@ -143,58 +144,71 @@ internal static class OpenXmlHelper
     // Differential fills store the patterns differently than other fills. Actually,
     //  differential fills make more sense. bg is bg, and fg is fg
     // 'Other' fills store the bg color in the fg field when the pattern type is solid
-    internal static void LoadFill(Fill? openXMLFill, IXLFill XLiburFill, bool differentialFillFormat)
+    internal static void LoadFill(Fill? openXmlFill, IXLFill xLiburFill, bool differentialFillFormat)
     {
-        if (openXMLFill?.PatternFill == null) return;
+        if (openXmlFill?.PatternFill == null) return;
 
-        if (openXMLFill.PatternFill.PatternType != null)
-            XLiburFill.PatternType = openXMLFill.PatternFill.PatternType.Value.ToXLibur();
-        else
-            XLiburFill.PatternType = XLFillPatternValues.Solid;
+        xLiburFill.PatternType = openXmlFill.PatternFill.PatternType != null
+            ? openXmlFill.PatternFill.PatternType.Value.ToXLibur()
+            : XLFillPatternValues.Solid;
 
-        switch (XLiburFill.PatternType)
+        switch (xLiburFill.PatternType)
         {
             case XLFillPatternValues.None:
                 break;
 
             case XLFillPatternValues.Solid:
-                LoadSolidFill(openXMLFill.PatternFill, XLiburFill, differentialFillFormat);
+                LoadSolidFill(openXmlFill.PatternFill, xLiburFill, differentialFillFormat);
                 break;
 
+            case XLFillPatternValues.DarkDown:
+            case XLFillPatternValues.DarkGray:
+            case XLFillPatternValues.DarkGrid:
+            case XLFillPatternValues.DarkHorizontal:
+            case XLFillPatternValues.DarkTrellis:
+            case XLFillPatternValues.DarkUp:
+            case XLFillPatternValues.DarkVertical:
+            case XLFillPatternValues.Gray0625:
+            case XLFillPatternValues.Gray125:
+            case XLFillPatternValues.LightDown:
+            case XLFillPatternValues.LightGray:
+            case XLFillPatternValues.LightGrid:
+            case XLFillPatternValues.LightHorizontal:
+            case XLFillPatternValues.LightTrellis:
+            case XLFillPatternValues.LightUp:
+            case XLFillPatternValues.LightVertical:
+            case XLFillPatternValues.MediumGray:
             default:
-                LoadPatternedFill(openXMLFill.PatternFill, XLiburFill);
+                LoadPatternedFill(openXmlFill.PatternFill, xLiburFill);
                 break;
         }
     }
 
-    private static void LoadSolidFill(PatternFill patternFill, IXLFill XLiburFill, bool differentialFillFormat)
+    private static void LoadSolidFill(PatternFill patternFill, IXLFill xLiburFill, bool differentialFillFormat)
     {
         if (differentialFillFormat)
         {
-            if (patternFill.BackgroundColor != null)
-                XLiburFill.BackgroundColor = patternFill.BackgroundColor.ToXLiburColor();
-            else
-                XLiburFill.BackgroundColor = XLColor.FromIndex(64);
+            xLiburFill.BackgroundColor = patternFill.BackgroundColor != null
+                ? patternFill.BackgroundColor.ToXLiburColor()
+                : XLColor.FromIndex(64);
         }
         else
         {
             // yes, source is foreground!
-            if (patternFill.ForegroundColor != null)
-                XLiburFill.BackgroundColor = patternFill.ForegroundColor.ToXLiburColor();
-            else
-                XLiburFill.BackgroundColor = XLColor.FromIndex(64);
+            xLiburFill.BackgroundColor = patternFill.ForegroundColor != null
+                ? patternFill.ForegroundColor.ToXLiburColor()
+                : XLColor.FromIndex(64);
         }
     }
 
-    private static void LoadPatternedFill(PatternFill patternFill, IXLFill XLiburFill)
+    private static void LoadPatternedFill(PatternFill patternFill, IXLFill xLiburFill)
     {
         if (patternFill.ForegroundColor != null)
-            XLiburFill.PatternColor = patternFill.ForegroundColor.ToXLiburColor();
+            xLiburFill.PatternColor = patternFill.ForegroundColor.ToXLiburColor();
 
-        if (patternFill.BackgroundColor != null)
-            XLiburFill.BackgroundColor = patternFill.BackgroundColor.ToXLiburColor();
-        else
-            XLiburFill.BackgroundColor = XLColor.FromIndex(64);
+        xLiburFill.BackgroundColor = patternFill.BackgroundColor != null
+            ? patternFill.BackgroundColor.ToXLiburColor()
+            : XLColor.FromIndex(64);
     }
 
     internal static void LoadFont(OpenXmlElement? fontSource, IXLFontBase fontBase)
@@ -252,7 +266,9 @@ internal static class OpenXmlHelper
     {
         var verticalTextAlignment = fontSource.Elements<VerticalTextAlignment>().FirstOrDefault();
         if (verticalTextAlignment is not null)
-            fontBase.VerticalAlignment = verticalTextAlignment.Val is not null ? verticalTextAlignment.Val.Value.ToXLibur() : XLFontVerticalTextAlignmentValues.Baseline;
+            fontBase.VerticalAlignment = verticalTextAlignment.Val is not null
+                ? verticalTextAlignment.Val.Value.ToXLibur()
+                : XLFontVerticalTextAlignmentValues.Baseline;
     }
 
     private static void LoadFontScheme(OpenXmlElement fontSource, IXLFontBase fontBase)
@@ -262,7 +278,7 @@ internal static class OpenXmlHelper
             fontBase.FontScheme = fontScheme.Val is not null ? fontScheme.Val.Value.ToXLibur() : XLFontScheme.None;
     }
 
-    internal static bool GetBoolean(BooleanPropertyType? property)
+    private static bool GetBoolean(BooleanPropertyType? property)
     {
         if (property != null)
         {
@@ -415,25 +431,26 @@ internal static class OpenXmlHelper
     /// <summary>
     /// Here we perform the actual conversion from OpenXML color to XLibur color.
     /// </summary>
-    /// <param name="openXMLColor">OpenXML color. Must be either <see cref="ColorType"/> or <see cref="X14.ColorType"/>.
+    /// <param name="openXmlColor">OpenXML color. Must be either <see cref="ColorType"/> or <see cref="X14.ColorType"/>.
     /// Since these types do not implement a common interface, we use dynamic.</param>
     /// <returns>The color in XLibur format.</returns>
-    private static XLColor ConvertToXLiburColor(IColorTypeAdapter openXMLColor)
+    private static XLColor ConvertToXLiburColor(IColorTypeAdapter openXmlColor)
     {
         XLColor? retVal = null;
-        if (openXMLColor.Rgb?.Value is not null)
+        if (openXmlColor.Rgb?.Value is not null)
         {
-            var thisColor = ColorStringParser.ParseFromArgb(openXMLColor.Rgb.Value.AsSpan());
+            var thisColor = ColorStringParser.ParseFromArgb(openXmlColor.Rgb.Value.AsSpan());
             retVal = XLColor.FromColor(thisColor);
         }
-        else if (openXMLColor.Indexed is not null && openXMLColor.Indexed <= 64)
-            retVal = XLColor.FromIndex((int)openXMLColor.Indexed.Value);
-        else if (openXMLColor.Theme is not null)
+        else if (openXmlColor.Indexed is not null && openXmlColor.Indexed <= 64)
+            retVal = XLColor.FromIndex((int)openXmlColor.Indexed.Value);
+        else if (openXmlColor.Theme is not null)
         {
-            retVal = openXMLColor.Tint is not null
-                ? XLColor.FromTheme((XLThemeColor)openXMLColor.Theme.Value, openXMLColor.Tint.Value)
-                : XLColor.FromTheme((XLThemeColor)openXMLColor.Theme.Value);
+            retVal = openXmlColor.Tint is not null
+                ? XLColor.FromTheme((XLThemeColor)openXmlColor.Theme.Value, openXmlColor.Tint.Value)
+                : XLColor.FromTheme((XLThemeColor)openXmlColor.Theme.Value);
         }
+
         return retVal ?? XLColor.NoColor;
     }
 
@@ -441,38 +458,38 @@ internal static class OpenXmlHelper
     /// Initialize properties of the existing instance of the color in OpenXML format basing on properties of the color
     /// in XLibur format.
     /// </summary>
-    /// <param name="openXMLColor">OpenXML color. Must be either <see cref="ColorType"/> or <see cref="X14.ColorType"/>.
-    /// Since these types do not implement a common interface we use dynamic.</param>
+    /// <param name="openXmlColor">OpenXML color. Must be either <see cref="ColorType"/> or <see cref="X14.ColorType"/>.
+    /// Since these types do not implement a common interface, we use dynamic.</param>
     /// <param name="xlColor">Color in XLibur format.</param>
     /// <param name="isDifferential">Flag specifying that the color should be saved in
     /// differential format (affects the transparent color processing).</param>
-    private static void FillFromXLiburColor(IColorTypeAdapter openXMLColor, XLColor xlColor, bool isDifferential)
+    private static void FillFromXLiburColor(IColorTypeAdapter openXmlColor, XLColor xlColor, bool isDifferential)
     {
-        ArgumentNullException.ThrowIfNull(openXMLColor);
+        ArgumentNullException.ThrowIfNull(openXmlColor);
         ArgumentNullException.ThrowIfNull(xlColor);
 
         switch (xlColor.ColorType)
         {
             case XLColorType.Color:
-                openXMLColor.Rgb = xlColor.Color.ToHex();
+                openXmlColor.Rgb = xlColor.Color.ToHex();
                 break;
 
             case XLColorType.Indexed:
                 // 64 is 'transparent' and should be ignored for differential formats
                 if (!isDifferential || xlColor.Indexed != 64)
-                    openXMLColor.Indexed = (uint)xlColor.Indexed;
+                    openXmlColor.Indexed = (uint)xlColor.Indexed;
                 break;
 
             case XLColorType.Theme:
-                openXMLColor.Theme = (uint)xlColor.ThemeColor;
+                openXmlColor.Theme = (uint)xlColor.ThemeColor;
 
                 if (xlColor.ThemeTint != 0)
-                    openXMLColor.Tint = xlColor.ThemeTint;
+                    openXmlColor.Tint = xlColor.ThemeTint;
                 break;
         }
     }
 
-    internal static int GetXLiburTextRotation(Alignment alignment)
+    private static int GetXLiburTextRotation(Alignment alignment)
     {
         if (alignment.TextRotation is null)
             return 0;
