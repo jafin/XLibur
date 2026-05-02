@@ -61,26 +61,17 @@ internal sealed class XLRows : XLStylizedBase, IXLRows, IXLStylized
         {
             _worksheet.Internals.RowsCollection.Clear();
             _worksheet.Internals.CellsCollection.Clear();
+            return;
         }
-        else
+
+        var rowsByWorksheet = Rows
+            .GroupBy(r => r.Worksheet, r => r.RowNumber())
+            .ToList();
+
+        foreach (var group in rowsByWorksheet)
         {
-            var toDelete = new Dictionary<IXLWorksheet, List<int>>();
-            foreach (var r in Rows)
-            {
-                if (!toDelete.TryGetValue(r.Worksheet, out var list))
-                {
-                    list = [];
-                    toDelete.Add(r.Worksheet, list);
-                }
-
-                list.Add(r.RowNumber());
-            }
-
-            foreach (var kp in toDelete)
-            {
-                foreach (var r in kp.Value.OrderByDescending(r => r))
-                    kp.Key.Row(r).Delete();
-            }
+            foreach (var rowNumber in group.OrderByDescending(n => n))
+                group.Key.Row(rowNumber).Delete();
         }
     }
 

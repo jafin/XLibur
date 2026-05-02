@@ -107,13 +107,12 @@ public static partial class XLHelper
         LetterIndexes = new Dictionary<string, int>(MaxColumnNumber, StringComparer.Create(ParseCulture, true));
         for (var i = 0; i < MaxColumnNumber; i++)
         {
-            string letter;
-            if (i < 26)
-                letter = Letters[i];
-            else if (i < 26 * 27)
-                letter = Letters[i / 26 - 1] + Letters[i % 26];
-            else
-                letter = Letters[(i - 26) / 26 / 26 - 1] + Letters[(i / 26 - 1) % 26] + Letters[i % 26];
+            var letter = i switch
+            {
+                < 26 => Letters[i],
+                < 26 * 27 => Letters[i / 26 - 1] + Letters[i % 26],
+                _ => Letters[(i - 26) / 26 / 26 - 1] + Letters[(i / 26 - 1) % 26] + Letters[i % 26]
+            };
             AllLetters[i] = letter;
             LetterIndexes.Add(letter, i + 1);
         }
@@ -133,10 +132,9 @@ public static partial class XLHelper
             return int.Parse(columnLetter, NumberStyle, ParseCulture);
         }
 
-        if (LetterIndexes.TryGetValue(columnLetter, out var retVal))
-            return retVal;
-
-        throw new ArgumentOutOfRangeException(columnLetter + " is not recognized as a column letter");
+        return LetterIndexes.TryGetValue(columnLetter, out var retVal)
+            ? retVal
+            : throw new ArgumentOutOfRangeException(columnLetter + " is not recognized as a column letter");
     }
 
     /// <summary>
@@ -167,33 +165,19 @@ public static partial class XLHelper
 
     public static bool IsValidColumn(string column)
     {
-        if (string.IsNullOrWhiteSpace(column))
-            return false;
-        var length = column.Length;
-        if (length > 3)
+        if (string.IsNullOrWhiteSpace(column) || column.Length > 3)
             return false;
 
-        var theColumn = column.ToUpper();
+        var columnNumber = 0;
+        foreach (var ch in column)
+        {
+            var letter = ch is >= 'a' and <= 'z' ? (char)(ch - ('a' - 'A')) : ch;
+            if (letter is < 'A' or > 'Z')
+                return false;
+            columnNumber = columnNumber * 26 + (letter - 'A' + 1);
+        }
 
-        var isValid = theColumn[0] >= 'A' && theColumn[0] <= 'Z';
-        if (length == 1)
-            return isValid;
-
-        if (length == 2)
-            return isValid && theColumn[1] >= 'A' && theColumn[1] <= 'Z';
-
-        if (theColumn[0] >= 'A' && theColumn[0] < 'X')
-            return theColumn[1] >= 'A' && theColumn[1] <= 'Z'
-                                       && theColumn[2] >= 'A' && theColumn[2] <= 'Z';
-
-        if (theColumn[0] != 'X') return false;
-
-        if (theColumn[1] < 'F')
-            return theColumn[2] >= 'A' && theColumn[2] <= 'Z';
-
-        if (theColumn[1] != 'F') return false;
-
-        return theColumn[2] >= 'A' && theColumn[2] <= 'D';
+        return columnNumber is >= MinColumnNumber and <= MaxColumnNumber;
     }
 
     public static bool IsValidRow(string rowString)
@@ -239,10 +223,10 @@ public static partial class XLHelper
     public static bool IsValidRangeAddress(IXLRangeAddress rangeAddress)
     {
         return rangeAddress is
-        {
-            IsValid: true, FirstAddress: { RowNumber: >= 1, ColumnNumber: >= 1 },
-            LastAddress: { RowNumber: <= MaxRowNumber, ColumnNumber: <= MaxColumnNumber }
-        }
+               {
+                   IsValid: true, FirstAddress: { RowNumber: >= 1, ColumnNumber: >= 1 },
+                   LastAddress: { RowNumber: <= MaxRowNumber, ColumnNumber: <= MaxColumnNumber }
+               }
                && rangeAddress.FirstAddress.RowNumber <= rangeAddress.LastAddress.RowNumber
                && rangeAddress.FirstAddress.ColumnNumber <= rangeAddress.LastAddress.ColumnNumber;
     }
@@ -403,7 +387,8 @@ public static partial class XLHelper
             return false;
         }
 
-        if (newName.Equals("C", StringComparison.OrdinalIgnoreCase) || newName.Equals("R", StringComparison.OrdinalIgnoreCase))
+        if (newName.Equals("C", StringComparison.OrdinalIgnoreCase) ||
+            newName.Equals("R", StringComparison.OrdinalIgnoreCase))
         {
             message = $"The {objectType} name '{newName}' is invalid";
             return false;

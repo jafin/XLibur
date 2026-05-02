@@ -14,7 +14,6 @@
 ==================================================================== */
 
 using System;
-using System.Text;
 
 namespace XLibur.Excel;
 
@@ -41,27 +40,29 @@ public static partial class XLHelper
         if (IllegalWorksheetCharacters.Contains(replaceChar) || replaceChar == '\'')
             throw new ArgumentException("Invalid replacement character.", nameof(replaceChar));
 
-        if (nameProposal == null)
-        {
+        if (nameProposal is null)
             return "null";
-        }
-        if (nameProposal.Length < 1)
-        {
+        if (nameProposal.Length == 0)
             return "empty";
-        }
-        var length = Math.Min(MaxWorksheetNameCharsCount, nameProposal.Length);
-        var shortenedName = nameProposal[..length];
-        var result = new StringBuilder(shortenedName);
-        for (var i = 0; i < length; i++)
-        {
-            var ch = result[i];
-            if (IllegalWorksheetCharacters.Contains(result[i]))
-                result[i] = replaceChar;
 
-            if (ch == '\'' && (i == 0 || i == length - 1))
-                result[i] = replaceChar;
-        }
-        return result.ToString();
+        var length = Math.Min(MaxWorksheetNameCharsCount, nameProposal.Length);
+        return string.Create(length, (nameProposal, replaceChar), static (span, state) =>
+        {
+            var (source, replace) = state;
+            var lastIndex = span.Length - 1;
+            for (var i = 0; i <= lastIndex; i++)
+            {
+                var ch = source[i];
+                span[i] = NeedsReplacement(ch, i, lastIndex) ? replace : ch;
+            }
+        });
+    }
+
+    private static bool NeedsReplacement(char ch, int index, int lastIndex)
+    {
+        if (Array.IndexOf(IllegalWorksheetCharacters, ch) >= 0)
+            return true;
+        return ch == '\'' && (index == 0 || index == lastIndex);
     }
 
     /// <summary>
