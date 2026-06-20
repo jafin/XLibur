@@ -322,6 +322,7 @@ internal static class WorksheetSheetDataReader
         var formulaInline = formula is not null;
 
         var cellHasValue = reader.IsStartElement("v");
+        var cellWasSetWithEmptyValue = false;
         if (cellHasValue)
         {
             SetCellValue(dataType, reader.GetText(), cellsCollection, cellAddress, cellStyleValue, ws,
@@ -331,12 +332,16 @@ internal static class WorksheetSheetDataReader
         else if (dataType.Equals(CellValues.SharedString) || dataType.Equals(CellValues.String))
         {
             cellsCollection.ValueSlice.SetCellValueDuringLoad(cellAddress, string.Empty, formulaInline);
+            cellWasSetWithEmptyValue = true;
         }
 
-        // If the cell doesn't contain a value, invalidate the formula so it recalculates.
+        // Formulas loaded with a cached <v> value (or a string-typed cell that we filled
+        // with an empty placeholder) are considered clean — their cached result is trusted
+        // until the workbook epoch bumps. Formulas without a cached value keep the default
+        // _evalEpoch (0), which reads as "explicitly dirty" so they recalculate on first read.
         // Formula can be null for slave cells of array formulas.
-        if (formulaInline && !cellHasValue)
-            formula!.IsDirty = true;
+        if (formulaInline && (cellHasValue || cellWasSetWithEmptyValue))
+            formula!.MarkClean(ws.Workbook);
 
         if (reader.IsStartElement("is"))
             LoadInlineString(dataType, cellsCollection, cellAddress, ws, reader);
@@ -1018,28 +1023,18 @@ internal static class WorksheetSheetDataReader
 
         // Integer part — accumulate in long for exact precision.
         long mantissa = 0;
-        int totalDigits = 0;
-        while (i < len && (uint)(s[i] - '0') <= 9)
-        {
-            mantissa = mantissa * 10 + (s[i] - '0');
-            totalDigits++;
-            i++;
-        }
+        var integerDigits = ScanDigits(s, ref i, ref mantissa);
 
-        int fractionDigits = 0;
+        var fractionDigits = 0;
 
         // Fractional part.
         if (i < len && s[i] == '.')
         {
             i++;
-            while (i < len && (uint)(s[i] - '0') <= 9)
-            {
-                mantissa = mantissa * 10 + (s[i] - '0');
-                fractionDigits++;
-                totalDigits++;
-                i++;
-            }
+            fractionDigits = ScanDigits(s, ref i, ref mantissa);
         }
+
+        var totalDigits = integerDigits + fractionDigits;
 
         // Must have consumed at least one digit and ALL characters.
         // Any remaining chars (exponent, whitespace, etc.) → fall back.
@@ -1053,6 +1048,24 @@ internal static class WorksheetSheetDataReader
 
         result = negative ? -d : d;
         return true;
+    }
+
+    /// <summary>
+    /// Consume the run of ASCII digits starting at <paramref name="i"/>, folding them into
+    /// <paramref name="mantissa"/>. Advances <paramref name="i"/> past the digits and returns the
+    /// number of digits consumed.
+    /// </summary>
+    private static int ScanDigits(string s, ref int i, ref long mantissa)
+    {
+        var start = i;
+        var len = s.Length;
+        while (i < len && (uint)(s[i] - '0') <= 9)
+        {
+            mantissa = mantissa * 10 + (s[i] - '0');
+            i++;
+        }
+
+        return i - start;
     }
 
     /// <summary>

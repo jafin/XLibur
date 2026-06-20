@@ -1400,6 +1400,9 @@ internal sealed class XLWorksheet : XLStoredRangeBase, IXLWorksheet
         Workbook.CalcEngine.Recalculate(Workbook, SheetId);
     }
 
+    public XLUsedCellEnumerable EnumerateUsedCells() =>
+        new(Internals.CellsCollection.ValueSlice, XLSheetRange.Full);
+
     public string Author { get; set; }
 
     public override string ToString()
@@ -1408,6 +1411,13 @@ internal sealed class XLWorksheet : XLStoredRangeBase, IXLWorksheet
     }
 
     public IXLPictures Pictures { get; private set; }
+
+    public IEnumerable<IXLPictureGroup> PictureGroups =>
+        ((IEnumerable<XLPicture>)(XLPictures)Pictures)
+        .Where(p => p.GroupInfo is not null)
+        .Select(p => p.GroupInfo!.GroupKey)
+        .Distinct()
+        .Select(key => (IXLPictureGroup)new XLPictureGroupView(this, key));
 
     public bool IsPasswordProtected => Protection.IsPasswordProtected;
 

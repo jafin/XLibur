@@ -30,7 +30,7 @@ jobs:
       MinVerDefaultPreReleaseIdentifiers: ${{ inputs.prerelease-label }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -64,6 +64,9 @@ jobs:
 
       - name: Pack XLibur.Fonts.SixLabors
         run: dotnet pack XLibur.Fonts.SixLabors/XLibur.Fonts.SixLabors.csproj --configuration Release --no-build --output ./artifacts
+
+      - name: Pack XLibur.Fonts.SkiaSharp
+        run: dotnet pack XLibur.Fonts.SkiaSharp/XLibur.Fonts.SkiaSharp.csproj --configuration Release --no-build --output ./artifacts
 
       - name: Show package version
         run: ls -la ./artifacts/
