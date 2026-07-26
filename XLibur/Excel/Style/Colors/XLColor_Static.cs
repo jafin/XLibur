@@ -268,6 +268,12 @@ public sealed partial class XLColor
         return colorKey == NoColor.Key;
     }
 
+    /// <inheritdoc cref="IsUnset(in XLColorKey)"/>
+    internal static bool IsUnset(XLColor color)
+    {
+        return color is null || !color.HasValue || IsUnset(color.Key);
+    }
+
     public static XLColor NoColor { get; } = new();
 
     public static XLColor AliceBlue => FromColor(Color.AliceBlue);

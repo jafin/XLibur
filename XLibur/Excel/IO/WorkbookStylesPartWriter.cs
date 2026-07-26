@@ -1028,7 +1028,10 @@ internal static class WorkbookStylesPartWriter
         if (!XLHelper.AreEqual(f.FontSize, d.FontSize) || ignoreMod)
             font.AppendChild(new FontSize { Val = f.FontSize });
 
-        if (f.FontColor != d.FontColor || ignoreMod)
+        // An unset color means automatic, which is expressed by having no <color> at all. Writing
+        // one would pin the font to a concrete color - and NoColor would serialize as a meaningless
+        // fully-transparent rgb="00000000".
+        if ((f.FontColor != d.FontColor || ignoreMod) && !XLColor.IsUnset(f.FontColor))
             font.AppendChild(new Color().FromXLiburColor<Color>(f.FontColor));
 
         if (f.FontName != d.FontName || ignoreMod)

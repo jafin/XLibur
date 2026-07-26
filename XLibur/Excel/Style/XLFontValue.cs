@@ -21,7 +21,12 @@ internal sealed class XLFontValue
         VerticalAlignment = XLFontVerticalTextAlignmentValues.Baseline,
         Shadow = false,
         FontSize = 11,
-        FontColor = XLColor.FromArgb(0, 0, 0).Key,
+
+        // Unset, not black. A <font> with no <color> means automatic: Excel resolves it against the
+        // theme, and conditional formatting can override it. Defaulting to black made "never set"
+        // and "explicitly black" indistinguishable, so a load/save round-trip pinned every such
+        // font to black. See XLColor.IsUnset.
+        FontColor = XLColor.NoColor.Key,
         FontName = "Calibri",
         FontFamilyNumbering = XLFontFamilyNumberingValues.Swiss,
         FontCharSet = XLFontCharSet.Default,
