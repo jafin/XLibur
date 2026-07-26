@@ -1,6 +1,7 @@
 ﻿using System.Xml;
 using XLibur.Excel.RichText;
 using XLibur.Extensions;
+using XLibur.Utils;
 using static XLibur.Excel.XLWorkbook;
 using static XLibur.Excel.IO.OpenXmlConst;
 
@@ -10,12 +11,24 @@ internal static class TextSerializer
 {
     internal static void WriteRichTextElements(XmlWriter w, XLImmutableRichText richText, SaveContext context)
     {
-        foreach (var textRun in richText.Runs)
+        if (richText.Runs.Count == 0)
         {
-            var text = richText.GetRunText(textRun);
-            if (text.Length > 0)
+            // Plain text carrying only a phonetic guide - it never had runs, so write it back as a
+            // bare <t> rather than wrapping it in a run with invented formatting. This text was
+            // decoded on the way in (unlike run text, which is not), so it has to be re-encoded:
+            // a decoded _xHHHH_ escape is a raw control character that is not valid XML content.
+            if (richText.Text.Length > 0)
+                WriteText(w, XmlEncoder.EncodeString(richText.Text));
+        }
+        else
+        {
+            foreach (var textRun in richText.Runs)
             {
-                WriteRun(w, text, textRun.Font);
+                var text = richText.GetRunText(textRun);
+                if (text.Length > 0)
+                {
+                    WriteRun(w, text, textRun.Font, textRun.InheritsCellFont);
+                }
             }
         }
 
@@ -60,12 +73,26 @@ internal static class TextSerializer
     internal static void WriteRun(XmlWriter w, XLImmutableRichText richText, XLImmutableRichText.RichTextRun run)
     {
         var runText = richText.GetRunText(run);
-        WriteRun(w, runText, run.Font);
+        WriteRun(w, runText, run.Font, run.InheritsCellFont);
     }
 
-    private static void WriteRun(XmlWriter w, string text, XLFontValue font)
+    /// <summary>
+    /// Writes one <c>&lt;r&gt;</c>. When <paramref name="inheritsCellFont"/> the run stated no
+    /// formatting of its own, so no <c>&lt;rPr&gt;</c> is written and the run keeps inheriting the
+    /// cell font on the way back in - writing the inherited font out would turn it into formatting
+    /// the source never asked for.
+    /// </summary>
+    private static void WriteRun(XmlWriter w, string text, XLFontValue font, bool inheritsCellFont)
     {
         w.WriteStartElement("r", Main2006SsNs);
+
+        if (inheritsCellFont)
+        {
+            WriteText(w, text);
+            w.WriteEndElement(); // r
+            return;
+        }
+
         w.WriteStartElement("rPr", Main2006SsNs);
 
         if (font.Bold)
@@ -91,7 +118,13 @@ internal static class TextSerializer
 
         WriteRunProperty(w, "vertAlign", font.VerticalAlignment.ToOpenXmlString());
         WriteRunProperty(w, "sz", font.FontSize);
-        w.WriteColor("color", font.FontColor);
+
+        // An unset color means the run is automatic - Excel resolves it against the theme, and
+        // conditional formatting can still override it. Writing an explicit black here would pin
+        // it down permanently.
+        if (!XLColor.IsUnset(font.FontColor.Key))
+            w.WriteColor("color", font.FontColor);
+
         WriteRunProperty(w, "rFont", font.FontName);
         WriteRunProperty(w, "family", (int)font.FontFamilyNumbering);
 
@@ -103,14 +136,19 @@ internal static class TextSerializer
 
         w.WriteEndElement(); // rPr
 
+        WriteText(w, text);
+
+        w.WriteEndElement(); // r
+    }
+
+    private static void WriteText(XmlWriter w, string text)
+    {
         w.WriteStartElement("t", Main2006SsNs);
         if (text.PreserveSpaces())
             w.WritePreserveSpaceAttr();
 
         w.WriteString(text);
-
         w.WriteEndElement(); // t
-        w.WriteEndElement(); // r
     }
 
     private static void WriteRunProperty(XmlWriter w, string elName, string val)

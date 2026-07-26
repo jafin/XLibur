@@ -54,8 +54,7 @@ dotnet add package XLibur.Bundle
 
 ### Font engine configuration (different from ClosedXML)
 
-This is the one area where XLibur's packaging differs from the base ClosedXML package. ClosedXML
-bundles [SixLabors.Fonts](https://github.com/SixLabors/Fonts) directly into its core assembly for text
+ClosedXML bundles [SixLabors.Fonts](https://github.com/SixLabors/Fonts) directly into its core assembly for text
 measurement (column auto-fit, row heights, glyph metrics). XLibur instead keeps the **core assembly
 free of any font library** and ships the font engine as a **separate, swappable package**. This lets
 you pick a font library with a license that suits you and avoids forcing a font dependency on library
@@ -103,10 +102,9 @@ See [docs/font-architecture.md](docs/font-architecture.md) for the full design.
 ## User Guide
 
 XLibur documentation lives at [xlibur.github.io/XLibur](https://xlibur.github.io/XLibur/) — start with
-the [Getting Started](https://xlibur.github.io/XLibur/getting-started) guide. The site sources are in
-[docs-website/](docs-website).
+the [Getting Started](https://xlibur.github.io/XLibur/getting-started) guide.
 
-Beyond that, as the library is largely the same as ClosedXML, the [ClosedXML documentation](https://closedxml.github.io/ClosedXML/) is still *mostly* valid for this library.
+As the library is mostly the same as ClosedXML, the [ClosedXML documentation](https://closedxml.github.io/ClosedXML/) is still *likely* valid for this library. (at least for the short term)
 
 
 ## Usage
@@ -149,7 +147,4 @@ Please read the [full developer guidelines](CONTRIBUTING.md).
 
 ## Credits
 
-* ClosedXML originally created by [Manuel de Leon](https://github.com/mdeleone)
-* ClosedXML maintainer: [Jan Havlíček](https://github.com/jahav)
-* Former ClosedXML maintainer and lead developer: [Francois Botha](https://github.com/igitur)
-* Master of Computing Patterns: [Aleksei Pankratev](https://github.com/Pankraty)
+* ClosedXML authors [Manuel de Leon](https://github.com/mdeleone), [Jan Havlíček](https://github.com/jahav), [Francois Botha](https://github.com/igitur), [Aleksei Pankratev](https://github.com/Pankraty)

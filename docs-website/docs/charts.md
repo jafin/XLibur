@@ -153,6 +153,30 @@ PlaceChart(revenueChart, row: 1, column: 4);
 PlaceChart(marginChart, row: 17, column: 4);
 ```
 
+### Anchoring
+
+By default a chart spans the rectangle between `Position` and `SecondPosition`, so inserting rows or
+columns moves and resizes it. `Anchor` picks a different rule:
+
+```csharp
+// Keep the size, move with the cell underneath the top-left corner
+chart.Anchor = XLDrawingAnchor.MoveWithCells;
+chart.Position.SetColumn(4).SetRow(3);
+chart.Width = 480;    // pixels
+chart.Height = 288;
+
+// Pin to a spot on the sheet, ignoring the grid
+chart.Anchor = XLDrawingAnchor.Absolute;
+chart.Left = 200;     // pixels from the left edge
+chart.Top = 120;
+chart.Width = 480;
+chart.Height = 288;
+```
+
+`SecondPosition` is only used by the default `MoveAndSizeWithCells`; `Width`/`Height` are only used
+by the other two, and `Left`/`Top` only by `Absolute`. All four are read back from a file, whichever
+anchor the chart came with.
+
 ## Combo charts
 
 Set `SecondaryChartType` and add series to `SecondarySeries`. Both types share one plot area —
@@ -172,6 +196,227 @@ combo.SecondPosition.SetColumn(10).SetRow(24);
 ```
 
 Set `SecondaryChartType` back to `null` to turn a combo chart into a single-type chart.
+
+## Series formatting
+
+Each series carries its own fill, outline and marker. Every property is optional: leave it alone
+and Excel picks the automatic colour from the workbook theme, which is usually what you want for
+all but one or two highlighted series.
+
+```csharp
+var chart = ws.Charts.Add(XLChartType.ColumnClustered);
+var revenue = chart.Series.Add("Revenue", "Sales!$B$2:$B$5", "Sales!$A$2:$A$5");
+
+revenue.FillColor = XLColor.FromHtml("#4472C4");     // bar interior
+revenue.LineColor = XLColor.FromHtml("#203864");     // bar border
+revenue.LineWidthPt = 1.5;
+```
+
+On a line or scatter series `LineColor` and `LineWidthPt` draw the line itself. The marker is a
+separate thing: `MarkerStyle` picks the symbol and `MarkerFillColor` fills it.
+
+```csharp
+chart.SecondaryChartType = XLChartType.LineWithMarkers;
+var trend = chart.SecondarySeries.Add("Margin %", "Sales!$D$2:$D$5", "Sales!$A$2:$A$5");
+
+trend.LineColor = XLColor.FromTheme(XLThemeColor.Accent2);
+trend.LineWidthPt = 2.25;
+trend.MarkerStyle = XLMarkerStyle.Circle;
+trend.MarkerSize = 7;                                 // 2 to 72 points
+trend.MarkerFillColor = XLColor.FromHtml("#70AD47");
+trend.Smooth = true;                                  // curve rather than straight segments
+```
+
+| Property | Applies to | Default |
+|---|---|---|
+| `FillColor` | bar, column, area and pie interiors | automatic (theme) |
+| `LineColor` | line and scatter lines; borders elsewhere | automatic (theme) |
+| `LineWidthPt` | any outline, 0 to 1584 points | Excel's own |
+| `MarkerStyle` | line, scatter, radar | `Auto` |
+| `MarkerSize` | line, scatter, radar, 2 to 72 points | Excel's own |
+| `MarkerFillColor` | line, scatter, radar | automatic (theme) |
+| `Smooth` | line, scatter | the chart type's default |
+
+`XLMarkerStyle` offers `Auto`, `None`, `Circle`, `Dash`, `Diamond`, `Dot`, `Plus`, `Square`,
+`Star`, `Triangle` and `X`. `Auto` — the default — writes nothing, so the chart type decides:
+the `LineWithMarkers*` types draw markers, plain `Line` does not.
+
+:::note
+Setting a colour to `null` clears it back to automatic; it never writes an explicit black. A
+theme colour is written as a DrawingML scheme colour, but its `ThemeTint` is not applied — pass an
+RGB colour if you need a specific tint.
+
+The extended (Office 2016+) types — Waterfall, Funnel, Treemap, Sunburst, Box &amp; Whisker —
+ignore series formatting.
+:::
+
+### Secondary value axis
+
+`UseSecondaryAxis` moves a series onto a second value axis drawn on the right, which is what
+makes a two-scale chart readable — units in the thousands next to a percentage, say:
+
+```csharp
+var chart = ws.Charts.Add(XLChartType.ColumnClustered);
+chart.Series.Add("Units", "Sales!$B$2:$B$5", "Sales!$A$2:$A$5");
+
+chart.SecondaryChartType = XLChartType.LineWithMarkers;
+var margin = chart.SecondarySeries.Add("Margin %", "Sales!$D$2:$D$5", "Sales!$A$2:$A$5");
+margin.UseSecondaryAxis = true;
+```
+
+It works on any series of a chart type that has one category and one value axis — bar, column, line,
+area, radar and stock — including series of the primary chart type. Pie and doughnut charts have no
+value axis, scatter and bubble charts already have two, and surface charts add a series axis, so all
+of those ignore it.
+
+:::caution
+`UseSecondaryAxis` can only be set on charts you create. Moving a series of a chart **loaded from
+a file** onto a secondary axis would mean regrouping the chart's XML, which XLibur does not do, so
+the setter throws `NotSupportedException`. The colour and marker properties have no such limit.
+:::
+
+## Data labels
+
+`DataLabels` exists on the chart and on each series. Set it on the chart to label every series the
+same way, then override the odd series that needs something different:
+
+```csharp
+var chart = ws.Charts.Add(XLChartType.ColumnClustered);
+chart.Series.Add("Revenue", "Sales!$B$2:$B$5", "Sales!$A$2:$A$5");
+var cost = chart.Series.Add("Cost", "Sales!$C$2:$C$5", "Sales!$A$2:$A$5");
+
+chart.DataLabels.ShowValue = true;
+chart.DataLabels.NumberFormat = "$ #,##0";
+chart.DataLabels.Position = XLDataLabelPosition.OutsideEnd;
+
+cost.DataLabels.ShowValue = true;
+cost.DataLabels.ShowSeriesName = true;
+cost.DataLabels.Position = XLDataLabelPosition.InsideEnd;
+```
+
+Pie and doughnut charts usually want the share rather than the number:
+
+```csharp
+var pie = ws.Charts.Add(XLChartType.Pie);
+var share = pie.Series.Add("Revenue", "Sales!$B$2:$B$5", "Sales!$A$2:$A$5");
+share.DataLabels.ShowCategoryName = true;
+share.DataLabels.ShowPercentage = true;
+share.DataLabels.Position = XLDataLabelPosition.BestFit;
+```
+
+| Property | Meaning | Default |
+|---|---|---|
+| `ShowValue` | the point's value | `false` |
+| `ShowCategoryName` | the category axis label | `false` |
+| `ShowSeriesName` | the series name | `false` |
+| `ShowPercentage` | share of the total, pie and doughnut only | `false` |
+| `NumberFormat` | format code for the label, e.g. `"0.0%"` | from the source cells |
+| `Position` | where the label sits | `Auto` |
+
+Nothing is written to the file until one of these is set, so an untouched chart keeps Excel's own
+defaults.
+
+### Label positions
+
+What Excel offers depends on the chart type, and it refuses to open a file that uses a position it
+does not offer — so the setter throws `ArgumentException` for a combination Excel would reject, with
+the allowed values in the message:
+
+| Chart type | Positions |
+|---|---|
+| clustered bar and column | `Center`, `InsideEnd`, `InsideBase`, `OutsideEnd` |
+| stacked bar and column | `Center`, `InsideEnd`, `InsideBase` |
+| line, scatter, radar | `Center`, `Left`, `Right`, `Above`, `Below` |
+| pie | `BestFit`, `Center`, `InsideEnd`, `OutsideEnd` |
+| area, doughnut, bubble, stock, every 3D type | `Auto` only |
+
+`Auto` — the default — writes no position and lets Excel place the label. In a combo chart, a
+secondary series is judged against `SecondaryChartType`, so a line series over columns takes the line
+positions.
+
+:::note
+Surface charts and the extended (Office 2016+) types have no data label support in the file format
+and ignore these properties. If a chart type change makes an already-set position invalid, the
+position is dropped on save rather than written — the alternative is a file Excel refuses to open.
+:::
+
+## Legend
+
+A chart XLibur creates has no legend until you ask for one:
+
+```csharp
+chart.Legend.Visible = true;
+chart.Legend.Position = XLLegendPosition.Bottom;   // Right (default), Bottom, Left, Top, TopRight
+chart.Legend.Overlay = true;                       // draw over the plot area rather than beside it
+```
+
+Setting `Visible = false` on a chart read from a file removes the legend it came with.
+
+## Axes
+
+`CategoryAxis` is the horizontal axis and `ValueAxis` the vertical one. `SecondaryValueAxis` is the
+one on the right, which exists while a series has `UseSecondaryAxis` set:
+
+```csharp
+chart.CategoryAxis.Title = "Quarter";
+
+chart.ValueAxis.Title = "Revenue";
+chart.ValueAxis.NumberFormat = "$ #,##0";
+chart.ValueAxis.Min = 0;
+chart.ValueAxis.Max = 60_000;
+chart.ValueAxis.MajorUnit = 10_000;
+chart.ValueAxis.MajorGridlines = true;
+
+chart.SecondaryValueAxis.Title = "Margin";
+chart.SecondaryValueAxis.NumberFormat = "0%";
+```
+
+| Property | Meaning | Default |
+|---|---|---|
+| `Title` | axis title text | `null` — no title |
+| `NumberFormat` | format code for the labels | from the source cells |
+| `Min` / `Max` | ends of the scale | chosen from the data |
+| `MajorUnit` / `MinorUnit` | tick intervals | chosen by Excel |
+| `Visible` | whether the axis is drawn | `true` |
+| `MajorGridlines` | gridlines across the plot | `false` |
+| `Orientation` | `MinMax`, or `MaxMin` to reverse the axis | `MinMax` |
+| `LogScale` / `LogBase` | logarithmic scale, base 2 to 1000 | `false` / `10` |
+
+A log scale is what makes values spanning orders of magnitude readable:
+
+```csharp
+chart.ValueAxis.LogScale = true;
+chart.ValueAxis.LogBase = 10;
+```
+
+:::note
+`MajorUnit`, `MinorUnit` and `LogScale` belong to a value axis in the file format and are skipped on
+a category axis — except on a scatter or bubble chart, where the horizontal axis holds numbers and
+takes them too. Pie and doughnut charts have no axes at all and ignore everything here.
+:::
+
+### Editing charts loaded from a file
+
+XLibur never regenerates the XML of a chart it read from a file — it patches in just the
+properties you assign. Everything it does not model stays exactly as Excel wrote it: trendlines,
+error bars, gradient and picture fills, per-point colours and label overrides, label and axis fonts,
+tick marks, the chart's style and colour parts.
+
+```csharp
+using var workbook = new XLWorkbook("Report.xlsx");
+var chart = workbook.Worksheet("Data").Charts.First();
+
+chart.Series.First().FillColor = XLColor.FromHtml("#C00000");
+chart.ValueAxis.Max = 60_000;
+workbook.Save();   // only the fill and the scale change; the trendline stays
+```
+
+Chart type, title and series references are settable on charts you create, but on a loaded chart
+only the series formatting, data labels, legend and axes are written back.
+
+The two things that would need a rebuilt plot area rather than a patch throw `NotSupportedException`
+instead of quietly doing nothing: `Series.Add(...)` and moving a series with `UseSecondaryAxis`.
+Recreate the chart with `ws.Charts.Add(type)` if you need either.
 
 ## Chart types
 
@@ -261,6 +506,9 @@ foreach (var chart in ws.Charts)
 }
 ```
 
+Charts anchored any of the three ways are listed, as are the chart types XLibur reads but does not
+write itself: 3D pie, line, area and surface groups, and pie-of-pie / bar-of-pie.
+
 Chart type and title are settable after creation:
 
 ```csharp
@@ -272,11 +520,12 @@ chart.Title = null;               // remove the title
 
 ## What is not covered
 
-The chart API is deliberately narrow: type, title, series, and placement. Axis titles, legend
-placement, gridlines, data labels, per-series colours, and trend lines are not exposed. If you
-need that level of control, the usual approach is to build a template workbook in Excel with
-the chart formatted exactly as you want it, then use XLibur to write the source data the chart
-already points at:
+The chart API covers type, title, series, series formatting, data labels, legend, axes and placement.
+Fonts, fills and borders of the chart furniture, gradient and picture fills, per-data-point
+formatting, trend lines and error bars are not exposed — though a chart read from a file keeps all of
+them. If you need that level of control over a chart you are creating, the usual approach is to build
+a template workbook in Excel with the chart formatted exactly as you want it, then use XLibur to write
+the source data the chart already points at:
 
 ```csharp
 using var workbook = new XLWorkbook("ChartTemplate.xlsx");
@@ -334,27 +583,47 @@ ws.Columns().AdjustToContents();
 const string sheet = "Quarterly";
 var categories = $"{sheet}!$A$2:$A${last}";
 
-// Chart 1: revenue vs cost
+// Chart 1: revenue vs cost, with cost played down
 var bars = ws.Charts.Add(XLChartType.ColumnClustered);
 bars.SetTitle("Revenue vs cost");
-bars.Series.Add("Revenue", $"{sheet}!$B$2:$B${last}", categories);
-bars.Series.Add("Cost", $"{sheet}!$C$2:$C${last}", categories);
+bars.Series.Add("Revenue", $"{sheet}!$B$2:$B${last}", categories).FillColor =
+    XLColor.FromHtml("#4472C4");
+bars.Series.Add("Cost", $"{sheet}!$C$2:$C${last}", categories).FillColor =
+    XLColor.FromHtml("#A5A5A5");
 bars.Position.SetColumn(5).SetRow(1);
 bars.SecondPosition.SetColumn(13).SetRow(16);
 
-// Chart 2: combo — revenue bars with the margin line over them
+// Chart 2: combo — revenue bars with the margin line on its own axis
 var combo = ws.Charts.Add(XLChartType.ColumnClustered);
 combo.SetTitle("Revenue and margin");
 combo.Series.Add("Revenue", $"{sheet}!$B$2:$B${last}", categories);
 combo.SecondaryChartType = XLChartType.LineWithMarkers;
-combo.SecondarySeries.Add("Margin %", $"{sheet}!$D$2:$D${last}", categories);
+
+var margin = combo.SecondarySeries.Add("Margin %", $"{sheet}!$D$2:$D${last}", categories);
+margin.UseSecondaryAxis = true;
+margin.LineColor = XLColor.FromHtml("#ED7D31");
+margin.LineWidthPt = 2.25;
+margin.MarkerStyle = XLMarkerStyle.Circle;
+margin.MarkerSize = 7;
+
 combo.Position.SetColumn(5).SetRow(18);
 combo.SecondPosition.SetColumn(13).SetRow(33);
+
+combo.Legend.Visible = true;
+combo.Legend.Position = XLLegendPosition.Bottom;
+combo.ValueAxis.Title = "Currency";
+combo.ValueAxis.NumberFormat = "$ #,##0";
+combo.ValueAxis.MajorGridlines = true;
+combo.SecondaryValueAxis.Title = "Margin";
+combo.SecondaryValueAxis.NumberFormat = "0%";
 
 // Chart 3: share of annual revenue
 var pie = ws.Charts.Add(XLChartType.Pie);
 pie.SetTitle("Share of annual revenue");
-pie.Series.Add("Revenue", $"{sheet}!$B$2:$B${last}", categories);
+var share = pie.Series.Add("Revenue", $"{sheet}!$B$2:$B${last}", categories);
+share.DataLabels.ShowCategoryName = true;
+share.DataLabels.ShowPercentage = true;
+share.DataLabels.Position = XLDataLabelPosition.BestFit;
 pie.Position.SetColumn(14).SetRow(1);
 pie.SecondPosition.SetColumn(21).SetRow(16);
 

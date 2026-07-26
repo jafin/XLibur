@@ -469,22 +469,7 @@ internal static class WorksheetSheetDataReader
         }
         else if (formulaType == CellFormulaValues.Array && refAttr is not null)
         {
-            // Child cells of an array may have an array type but no ref (reserved for the master cell).
-            var arrayArea = XLSheetRange.Parse(refAttr);
-            var isDynamicArray = cellMetaIndex is { } cm &&
-                                 dynamicArrayCmIndexes is not null &&
-                                 dynamicArrayCmIndexes.Contains(cm);
-            if (isDynamicArray)
-            {
-                formula = XLCellFormula.DynamicArrayA1(formulaText);
-                formula.Range = arrayArea;
-                formulaSlice.SetDuringLoad(cellAddress, formula);
-            }
-            else
-            {
-                formula = XLCellFormula.Array(formulaText, arrayArea, aca);
-                formulaSlice.SetArray(arrayArea, formula);
-            }
+            formula = LoadArrayFormulaXml(formulaText, refAttr, aca, cellAddress, cellMetaIndex, dynamicArrayCmIndexes, formulaSlice);
         }
         else if (formulaType == CellFormulaValues.Shared && sharedIndex is { } si)
         {
@@ -496,6 +481,32 @@ internal static class WorksheetSheetDataReader
         }
 
         return formula;
+    }
+
+    /// <summary>
+    /// Loads a classic or dynamic array formula from a master <c>&lt;f t="array"&gt;</c> cell.
+    /// Child cells of an array may have an array type but no <c>ref</c> (reserved for the master cell);
+    /// callers only invoke this when <c>ref</c> is present.
+    /// </summary>
+    private static XLCellFormula LoadArrayFormulaXml(string formulaText, string refAttr, bool aca,
+        XLSheetPoint cellAddress, uint? cellMetaIndex, HashSet<uint>? dynamicArrayCmIndexes,
+        FormulaSlice formulaSlice)
+    {
+        var arrayArea = XLSheetRange.Parse(refAttr);
+        var isDynamicArray = cellMetaIndex is { } cm &&
+                             dynamicArrayCmIndexes is not null &&
+                             dynamicArrayCmIndexes.Contains(cm);
+        if (isDynamicArray)
+        {
+            var formula = XLCellFormula.DynamicArrayA1(formulaText);
+            formula.Range = arrayArea;
+            formulaSlice.SetDuringLoad(cellAddress, formula);
+            return formula;
+        }
+
+        var arrayFormula = XLCellFormula.Array(formulaText, arrayArea, aca);
+        formulaSlice.SetArray(arrayArea, arrayFormula);
+        return arrayFormula;
     }
 
     private static XLCellFormula LoadDataTableFormulaXml(string refAttr, string? r1Attr, string? r2Attr,
@@ -723,6 +734,7 @@ internal static class WorksheetSheetDataReader
     {
         var runs = element.Elements<Run>();
         var hasRuns = false;
+        XLFont? colorlessCellFont = null;
         foreach (var run in runs)
         {
             hasRuns = true;
@@ -730,10 +742,21 @@ internal static class WorksheetSheetDataReader
             var text = run.Text!.InnerText.FixNewLines();
 
             if (runProperties == null)
-                xlCell.GetRichText().AddText(text, xlCell.Style.Font);
+            {
+                // No rPr at all: the run inherits the cell font (ECMA-376 CT_RElt). Record it as
+                // stating no formatting of its own, so the save writes it back without an rPr rather
+                // than materializing the inherited font - including a color the cell font may only
+                // carry because it was itself defaulted to black.
+                xlCell.GetRichText().AddInheritedText(text);
+            }
             else
             {
-                var rt = xlCell.GetRichText().AddText(text);
+                // Start from the cell font with the color stripped: an rPr that omits <color> means
+                // automatic, so inheriting the cell's color here would be wrong and would materialize
+                // an explicit one on save. LoadFont puts a color back whenever the rPr carries one.
+                var colorless = ColorlessFont(xlCell.Style.Font, ref colorlessCellFont);
+                var rt = xlCell.GetRichText().AddText(text, colorless);
+
                 var fontScheme = runProperties.Elements<FontScheme>().FirstOrDefault();
                 if (fontScheme is { Val: not null })
                     rt.SetFontScheme(fontScheme.Val.Value.ToXLibur());
@@ -746,6 +769,33 @@ internal static class WorksheetSheetDataReader
             xlCell.SetOnlyValue(XmlEncoder.DecodeString(element.Text?.InnerText));
 
         LoadPhonetics(xlCell, element);
+
+        if (!hasRuns)
+            DemoteSyntheticRun(xlCell);
+    }
+
+    /// <summary>
+    /// <paramref name="cellFont"/> with its color left unset, cached for the lifetime of one shared
+    /// string. Runs are seeded with this rather than being recolored after the fact, because every
+    /// mutation of a run re-interns the whole rich text in the shared string table.
+    /// </summary>
+    private static XLFont ColorlessFont(IXLFontBase cellFont, ref XLFont? cached)
+    {
+        return cached ??= new XLFont(XLFont.GenerateKey(cellFont) with { FontColor = XLColor.Automatic.Key });
+    }
+
+    /// <summary>
+    /// A string that is plain text but carries a phonetic guide (<c>&lt;t&gt;</c> + <c>&lt;rPh&gt;</c>,
+    /// common in Japanese workbooks) has no rich-text runs. Reading its phonetics goes through the
+    /// mutable rich text API, which promotes the text into a synthetic run carrying the cell font.
+    /// Drop that run again so the runless shape - and with it the absence of any run formatting -
+    /// survives the round-trip.
+    /// </summary>
+    private static void DemoteSyntheticRun(XLCell xlCell)
+    {
+        var richText = xlCell.SliceRichText;
+        if (richText is not null)
+            xlCell.SliceRichText = richText.WithoutRuns();
     }
 
     internal static void LoadColumns(StylesheetData styles, XLWorksheet ws, Columns columns)
@@ -1304,17 +1354,9 @@ internal static class WorksheetSheetDataReader
 
     /// <summary>
     /// Fast-path parser for non-negative integer strings as found in OOXML shared string
-    /// indices. Only accepts pure ASCII digit sequences with no whitespace or signs.
+    /// indices and similar attributes. Only accepts pure ASCII digit sequences with no
+    /// whitespace or signs.
     /// </summary>
-    /// <summary>
-    /// Parse a row index attribute value. Row indices in OOXML are always positive integers.
-    /// </summary>
-    private static int ParseRowIndex(ReadOnlySpan<char> s)
-    {
-        TryParseOoxmlNonNegativeInt(s, out var result);
-        return result;
-    }
-
     private static bool TryParseOoxmlNonNegativeInt(ReadOnlySpan<char> s, out int result)
     {
         result = 0;

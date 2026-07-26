@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -21,19 +22,25 @@ internal static class ChartReader
         if (drawingsPart?.WorksheetDrawing == null)
             return;
 
-        foreach (var anchor in drawingsPart.WorksheetDrawing.Elements<Xdr.TwoCellAnchor>())
+        // Excel writes a chart under any of the three anchor kinds. A one-cell or absolute anchored
+        // chart used to be skipped here, which left it out of ws.Charts entirely.
+        foreach (var anchor in drawingsPart.WorksheetDrawing.ChildElements)
         {
-            var xlChart = TryLoadChartFromAnchor(drawingsPart, anchor, ws);
-            if (xlChart != null)
-            {
-                ReadPositions(anchor, xlChart);
-                ws.Charts.Add(xlChart);
-            }
+            if (anchor is not (Xdr.TwoCellAnchor or Xdr.OneCellAnchor or Xdr.AbsoluteAnchor))
+                continue;
+
+            var composite = (OpenXmlCompositeElement)anchor;
+            var xlChart = TryLoadChartFromAnchor(drawingsPart, composite, ws);
+            if (xlChart == null)
+                continue;
+
+            ReadAnchor(composite, xlChart);
+            ws.Charts.Add(xlChart);
         }
     }
 
     private static XLChart? TryLoadChartFromAnchor(
-        DrawingsPart drawingsPart, Xdr.TwoCellAnchor anchor, XLWorksheet ws)
+        DrawingsPart drawingsPart, OpenXmlCompositeElement anchor, XLWorksheet ws)
     {
         // GraphicFrame may be direct child or inside mc:AlternateContent > mc:Choice
         var graphicFrame = anchor.Elements<Xdr.GraphicFrame>().FirstOrDefault()
@@ -91,11 +98,14 @@ internal static class ChartReader
 
         var xlChart = new XLChart(ws) { IsNew = false, RelId = relId };
         ReadTitle(chart, xlChart);
+        ChartFormatting.ReadLegend(chart.Elements<C.Legend>().FirstOrDefault(), xlChart.LegendInternal);
 
         var plotArea = chart.PlotArea;
         if (plotArea != null)
             ReadPlotArea(plotArea, xlChart);
 
+        // Set last: the series readers above assign properties that are refused on a loaded chart.
+        xlChart.LoadedFromFile = true;
         return xlChart;
     }
 
@@ -116,158 +126,112 @@ internal static class ChartReader
 
     private static void ReadPlotArea(C.PlotArea plotArea, XLChart xlChart)
     {
+        var groups = ChartPlotAreaScanner.Scan(plotArea);
+        var primaryKind = ChartPlotAreaScanner.ChoosePrimaryKind(groups);
+        if (primaryKind == null)
+            return;
+
+        var primaryGroup = ChartPlotAreaScanner.PrimaryGroup(plotArea, groups, primaryKind.Value);
+        var primaryValueAxisId = primaryGroup.ValueAxisId;
+        ReadAxes(plotArea, groups, primaryGroup, primaryValueAxisId, xlChart);
         var primarySet = false;
 
-        // Primary-only chart types (cannot be secondary in a combo chart)
-        primarySet |= TryReadPrimaryChart<C.BarChart, C.BarChartSeries>(plotArea, xlChart, ref primarySet, DetermineBarChartType);
-        primarySet |= TryReadPrimaryChart<C.Bar3DChart, C.BarChartSeries>(plotArea, xlChart, ref primarySet, DetermineBar3DChartType);
-        primarySet |= TryReadPrimaryChart<C.PieChart, C.PieChartSeries>(plotArea, xlChart, ref primarySet, _ => XLChartType.Pie);
-        primarySet |= TryReadPrimaryChart<C.DoughnutChart, C.PieChartSeries>(plotArea, xlChart, ref primarySet, _ => XLChartType.Doughnut);
-
-        // Chart types that can appear as primary or secondary (combo charts)
-        TryReadComboChart<C.AreaChart, C.AreaChartSeries>(plotArea, xlChart, ref primarySet, DetermineAreaChartType);
-        TryReadComboChart<C.LineChart, C.LineChartSeries>(plotArea, xlChart, ref primarySet, DetermineLineChartType);
-        TryReadComboChart<C.RadarChart, C.RadarChartSeries>(plotArea, xlChart, ref primarySet, DetermineRadarChartType);
-
-        // Primary-only chart types with custom series readers
-        TryReadPrimaryChartCustom(plotArea, xlChart, ref primarySet);
-    }
-
-    private static bool TryReadPrimaryChart<TChart, TSeries>(
-        C.PlotArea plotArea, XLChart xlChart, ref bool primarySet,
-        Func<TChart, XLChartType> determineType)
-        where TChart : OpenXmlCompositeElement
-        where TSeries : OpenXmlCompositeElement
-    {
-        if (primarySet) return false;
-        var chart = plotArea.Elements<TChart>().FirstOrDefault();
-        if (chart == null) return false;
-
-        xlChart.ChartType = determineType(chart);
-        ReadSeriesFromElements<TSeries>(chart, xlChart.Series);
-        return true;
-    }
-
-    private static void TryReadComboChart<TChart, TSeries>(
-        C.PlotArea plotArea, XLChart xlChart, ref bool primarySet,
-        Func<TChart, XLChartType> determineType)
-        where TChart : OpenXmlCompositeElement
-        where TSeries : OpenXmlCompositeElement
-    {
-        var chart = plotArea.Elements<TChart>().FirstOrDefault();
-        if (chart == null) return;
-
-        var chartType = determineType(chart);
-        if (!primarySet)
+        foreach (var group in groups)
         {
-            xlChart.ChartType = chartType;
-            ReadSeriesFromElements<TSeries>(chart, xlChart.Series);
-            primarySet = true;
-        }
-        else
-        {
-            xlChart.SecondaryChartType = chartType;
-            ReadSeriesFromElements<TSeries>(chart, xlChart.SecondarySeries);
-        }
-    }
+            var chartType = DetermineChartType(group);
+            var isPrimary = group.Kind == primaryKind.Value;
+            var useSecondaryAxis = group.ValueAxisId != null
+                                   && primaryValueAxisId != null
+                                   && group.ValueAxisId != primaryValueAxisId;
 
-    private static void TryReadPrimaryChartCustom(
-        C.PlotArea plotArea, XLChart xlChart, ref bool primarySet)
-    {
-        // Bubble
-        if (!primarySet)
-        {
-            var bubbleChart = plotArea.Elements<C.BubbleChart>().FirstOrDefault();
-            if (bubbleChart != null)
+            if (isPrimary)
             {
-                xlChart.ChartType = XLChartType.Bubble;
-                ReadBubbleSeries(bubbleChart, xlChart.Series);
-                primarySet = true;
+                if (!primarySet)
+                {
+                    xlChart.ChartType = chartType;
+                    primarySet = true;
+
+                    // The chart-wide labels live on the primary chart group.
+                    ChartFormatting.ReadDataLabels(
+                        group.Element.Elements<C.DataLabels>().FirstOrDefault(), xlChart.DataLabelsInternal);
+                }
+
+                ReadGroupSeries(group, xlChart.SeriesInternal, useSecondaryAxis);
             }
-        }
-
-        // Scatter
-        if (!primarySet)
-        {
-            var scatterChart = plotArea.Elements<C.ScatterChart>().FirstOrDefault();
-            if (scatterChart != null)
+            else
             {
-                xlChart.ChartType = DetermineScatterChartType(scatterChart);
-                ReadScatterSeries(scatterChart, xlChart.Series);
-                primarySet = true;
-            }
-        }
-
-        // Stock
-        if (!primarySet)
-        {
-            var stockChart = plotArea.Elements<C.StockChart>().FirstOrDefault();
-            if (stockChart != null)
-            {
-                xlChart.ChartType = XLChartType.StockHighLowClose;
-                ReadSeriesFromElements<C.LineChartSeries>(stockChart, xlChart.Series);
-                primarySet = true;
-            }
-        }
-
-        // Surface
-        if (!primarySet)
-        {
-            var surfaceChart = plotArea.Elements<C.SurfaceChart>().FirstOrDefault();
-            if (surfaceChart != null)
-            {
-                var wireframe = surfaceChart.Elements<C.Wireframe>().FirstOrDefault()?.Val?.Value ?? false;
-                xlChart.ChartType = wireframe ? XLChartType.SurfaceWireframe : XLChartType.Surface;
-                ReadSeriesFromElements<C.SurfaceChartSeries>(surfaceChart, xlChart.Series);
+                // The model carries two chart types. A plot area may hold more, in which case the
+                // series of the third and later groups still land in the secondary collection but are
+                // reported under the second group's type — see IXLChart.SecondaryChartType.
+                xlChart.SecondaryChartType ??= chartType;
+                ReadGroupSeries(group, xlChart.SecondarySeriesInternal, useSecondaryAxis);
             }
         }
     }
 
     /// <summary>
-    /// Generic reader for standard series types that use SeriesText + CategoryAxisData + Values.
+    /// Reads the horizontal axis, the value axis and — when a group hangs off a different value axis —
+    /// the secondary value axis into the model.
     /// </summary>
-    private static void ReadSeriesFromElements<TSeries>(
-        OpenXmlCompositeElement parent, IXLChartSeriesCollection target)
-        where TSeries : OpenXmlCompositeElement
+    private static void ReadAxes(
+        C.PlotArea plotArea, List<XLChartGroup> groups, XLChartGroup primaryGroup,
+        uint? primaryValueAxisId, XLChart xlChart)
     {
-        foreach (var series in parent.Elements<TSeries>())
+        ChartFormatting.ReadAxis(
+            ChartPlotAreaScanner.FindAxis(plotArea, primaryGroup.CategoryAxisId),
+            xlChart.CategoryAxisInternal);
+        ChartFormatting.ReadAxis(
+            ChartPlotAreaScanner.FindAxis(plotArea, primaryValueAxisId),
+            xlChart.ValueAxisInternal);
+
+        var secondaryGroup = groups.Find(g =>
+            g.ValueAxisId != null && primaryValueAxisId != null && g.ValueAxisId != primaryValueAxisId);
+        if (secondaryGroup != null)
         {
-            var (name, catRef, valRef) = ExtractSeriesData(
-                series.Elements<C.SeriesText>().FirstOrDefault(),
-                series.Elements<C.CategoryAxisData>().FirstOrDefault(),
-                series.Elements<C.Values>().FirstOrDefault());
-            target.Add(name, valRef, catRef);
+            ChartFormatting.ReadAxis(
+                ChartPlotAreaScanner.FindAxis(plotArea, secondaryGroup.ValueAxisId),
+                xlChart.SecondaryValueAxisInternal);
         }
     }
 
-    private static void ReadScatterSeries(C.ScatterChart scatterChart, IXLChartSeriesCollection target)
+    private static XLChartType DetermineChartType(XLChartGroup group) => group.Kind switch
     {
-        foreach (var series in scatterChart.Elements<C.ScatterChartSeries>())
+        XLChartGroupKind.Bar => DetermineBarChartType((C.BarChart)group.Element),
+        XLChartGroupKind.Bar3D => DetermineBar3DChartType((C.Bar3DChart)group.Element),
+        XLChartGroupKind.Pie => XLChartType.Pie,
+        XLChartGroupKind.Pie3D => XLChartType.Pie3D,
+        XLChartGroupKind.OfPie => DetermineOfPieChartType((C.OfPieChart)group.Element),
+        XLChartGroupKind.Doughnut => XLChartType.Doughnut,
+        XLChartGroupKind.Area => DetermineAreaChartType((C.AreaChart)group.Element),
+        XLChartGroupKind.Area3D => DetermineArea3DChartType((C.Area3DChart)group.Element),
+        XLChartGroupKind.Line => DetermineLineChartType((C.LineChart)group.Element),
+        XLChartGroupKind.Line3D => XLChartType.Line3D,
+        XLChartGroupKind.Radar => DetermineRadarChartType((C.RadarChart)group.Element),
+        XLChartGroupKind.Bubble => XLChartType.Bubble,
+        XLChartGroupKind.Scatter => DetermineScatterChartType((C.ScatterChart)group.Element),
+        XLChartGroupKind.Stock => XLChartType.StockHighLowClose,
+        XLChartGroupKind.Surface => DetermineSurfaceChartType((C.SurfaceChart)group.Element),
+        XLChartGroupKind.Surface3D => DetermineSurface3DChartType((C.Surface3DChart)group.Element),
+        _ => XLChartType.ColumnClustered
+    };
+
+    /// <summary>
+    /// Reads every series of one chart group — references, name and formatting — into the model.
+    /// </summary>
+    private static void ReadGroupSeries(
+        XLChartGroup group, XLChartSeriesCollection target, bool useSecondaryAxis)
+    {
+        foreach (var seriesElement in group.SeriesElements)
         {
-            var name = ExtractSeriesName(series.Elements<C.SeriesText>().FirstOrDefault());
+            var name = ExtractSeriesName(seriesElement.Elements<C.SeriesText>().FirstOrDefault());
+            var (catRef, valRef) = group.IsXyBased
+                ? ExtractXyReferences(seriesElement)
+                : ExtractCategoryAndValueReferences(seriesElement);
 
-            string? xRef = null;
-            var xValues = series.Elements<C.XValues>().FirstOrDefault();
-            if (xValues != null)
-            {
-                var numRef = xValues.Elements<C.NumberReference>().FirstOrDefault();
-                xRef = numRef?.Formula?.Text;
-                if (xRef == null)
-                {
-                    var strRef = xValues.Elements<C.StringReference>().FirstOrDefault();
-                    xRef = strRef?.Formula?.Text;
-                }
-            }
-
-            var yRef = string.Empty;
-            var yValues = series.Elements<C.YValues>().FirstOrDefault();
-            if (yValues != null)
-            {
-                var numRef = yValues.Elements<C.NumberReference>().FirstOrDefault();
-                yRef = numRef?.Formula?.Text ?? string.Empty;
-            }
-
-            target.Add(name, yRef, xRef);
+            var series = (XLChartSeries)target.Add(name, valRef, catRef);
+            ChartFormatting.ReadSeriesFormat(seriesElement, series, useSecondaryAxis);
+            ChartFormatting.ReadDataLabels(
+                seriesElement.Elements<C.DataLabels>().FirstOrDefault(), series.DataLabelsInternal);
         }
     }
 
@@ -287,6 +251,7 @@ internal static class ChartReader
         ReadExtendedTitle(chartSpace, xlChart);
         ReadExtendedSeries(chartSpace, xlChart);
 
+        xlChart.LoadedFromFile = true;
         return xlChart;
     }
 
@@ -380,7 +345,7 @@ internal static class ChartReader
     private static XLChartType DetermineLineChartType(C.LineChart lineChart)
     {
         var grouping = lineChart.Grouping?.Val?.Value;
-        var hasMarkers = lineChart.Elements<C.LineChartSeries>().Any(s => s.Elements<C.Marker>().Any());
+        var hasMarkers = lineChart.Elements<C.LineChartSeries>().Any(HasVisibleMarker);
 
         if (grouping == C.GroupingValues.Stacked)
             return hasMarkers ? XLChartType.LineWithMarkersStacked : XLChartType.LineStacked;
@@ -388,6 +353,21 @@ internal static class ChartReader
             return hasMarkers ? XLChartType.LineWithMarkersStacked100Percent : XLChartType.LineStacked100Percent;
 
         return hasMarkers ? XLChartType.LineWithMarkers : XLChartType.Line;
+    }
+
+    /// <summary>
+    /// Whether a series carries a marker that actually draws something. A <c>c:marker</c> holding
+    /// <c>&lt;c:symbol val="none"/&gt;</c> switches markers off, so it must not turn a Line chart
+    /// into a LineWithMarkers chart.
+    /// </summary>
+    private static bool HasVisibleMarker(C.LineChartSeries series)
+    {
+        var marker = series.Elements<C.Marker>().FirstOrDefault();
+        if (marker == null)
+            return false;
+
+        var symbol = marker.Elements<C.Symbol>().FirstOrDefault()?.Val;
+        return symbol == null || symbol.Value != C.MarkerStyleValues.None;
     }
 
     private static XLChartType DetermineRadarChartType(C.RadarChart radarChart) =>
@@ -465,27 +445,39 @@ internal static class ChartReader
         return XLChartType.Area;
     }
 
-    private static void ReadBubbleSeries(C.BubbleChart bubbleChart, IXLChartSeriesCollection target)
+    /// <summary>
+    /// A <c>c:surfaceChart</c> is strictly the flat contour variant, but XLibur's writer emits every
+    /// surface type as one, so it is read back as the plain surface type its own writer meant.
+    /// </summary>
+    private static XLChartType DetermineSurfaceChartType(C.SurfaceChart surfaceChart)
     {
-        foreach (var series in bubbleChart.Elements<C.BubbleChartSeries>())
-        {
-            var name = ExtractSeriesName(series.Elements<C.SeriesText>().FirstOrDefault());
+        var wireframe = surfaceChart.Elements<C.Wireframe>().FirstOrDefault()?.Val?.Value ?? false;
+        return wireframe ? XLChartType.SurfaceWireframe : XLChartType.Surface;
+    }
 
-            string? xRef = null;
-            var xValues = series.Elements<C.XValues>().FirstOrDefault();
-            if (xValues != null)
-            {
-                xRef = xValues.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text;
-                xRef ??= xValues.Elements<C.StringReference>().FirstOrDefault()?.Formula?.Text;
-            }
+    private static XLChartType DetermineSurface3DChartType(C.Surface3DChart surfaceChart)
+    {
+        var wireframe = surfaceChart.Elements<C.Wireframe>().FirstOrDefault()?.Val?.Value ?? false;
+        return wireframe ? XLChartType.SurfaceWireframe : XLChartType.Surface;
+    }
 
-            var yRef = string.Empty;
-            var yValues = series.Elements<C.YValues>().FirstOrDefault();
-            if (yValues != null)
-                yRef = yValues.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text ?? string.Empty;
+    /// <summary>
+    /// A <c>c:ofPieChart</c> is either pie-of-pie or bar-of-pie, told apart by <c>c:ofPieType</c>.
+    /// </summary>
+    private static XLChartType DetermineOfPieChartType(C.OfPieChart ofPieChart)
+    {
+        var type = ofPieChart.Elements<C.OfPieType>().FirstOrDefault()?.Val;
+        return type != null && type.Value == C.OfPieValues.Bar
+            ? XLChartType.PieToBar
+            : XLChartType.PieToPie;
+    }
 
-            target.Add(name, yRef, xRef);
-        }
+    private static XLChartType DetermineArea3DChartType(C.Area3DChart areaChart)
+    {
+        var grouping = areaChart.Grouping?.Val?.Value;
+        if (grouping == C.GroupingValues.Stacked) return XLChartType.AreaStacked3D;
+        if (grouping == C.GroupingValues.PercentStacked) return XLChartType.AreaStacked100Percent3D;
+        return XLChartType.Area3D;
     }
 
     private static XLChartType DetermineScatterChartType(C.ScatterChart scatterChart)
@@ -498,10 +490,14 @@ internal static class ChartReader
 
     // ── Shared extraction helpers ───────────────────────────────────────
 
-    private static (string name, string? catRef, string valRef) ExtractSeriesData(
-        C.SeriesText? seriesText, C.CategoryAxisData? catData, C.Values? valData)
+    /// <summary>
+    /// Extracts the category and value references of a series that uses <c>c:cat</c>/<c>c:val</c>.
+    /// </summary>
+    private static (string? catRef, string valRef) ExtractCategoryAndValueReferences(
+        OpenXmlCompositeElement seriesElement)
     {
-        var name = ExtractSeriesName(seriesText);
+        var catData = seriesElement.Elements<C.CategoryAxisData>().FirstOrDefault();
+        var valData = seriesElement.Elements<C.Values>().FirstOrDefault();
 
         string? catRef = null;
         if (catData != null)
@@ -510,18 +506,41 @@ internal static class ChartReader
             catRef ??= catData.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text;
         }
 
-        var valRef = string.Empty;
-        if (valData != null)
-        {
-            valRef = valData.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text ?? string.Empty;
-        }
-
-        return (name, catRef, valRef);
+        var valRef = valData?.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text ?? string.Empty;
+        return (catRef, valRef);
     }
 
+    /// <summary>
+    /// Extracts the X and Y references of a scatter or bubble series, which uses
+    /// <c>c:xVal</c>/<c>c:yVal</c> instead of categories and values.
+    /// </summary>
+    private static (string? catRef, string valRef) ExtractXyReferences(OpenXmlCompositeElement seriesElement)
+    {
+        string? xRef = null;
+        var xValues = seriesElement.Elements<C.XValues>().FirstOrDefault();
+        if (xValues != null)
+        {
+            xRef = xValues.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text;
+            xRef ??= xValues.Elements<C.StringReference>().FirstOrDefault()?.Formula?.Text;
+        }
+
+        var yValues = seriesElement.Elements<C.YValues>().FirstOrDefault();
+        var yRef = yValues?.Elements<C.NumberReference>().FirstOrDefault()?.Formula?.Text ?? string.Empty;
+        return (xRef, yRef);
+    }
+
+    /// <summary>
+    /// Reads the series name from either form of <c>c:tx</c>: the literal <c>c:v</c> XLibur writes,
+    /// or the <c>c:strRef</c> Excel writes when the name comes from a cell — in which case the
+    /// cached value is the name the user sees.
+    /// </summary>
     private static string ExtractSeriesName(C.SeriesText? seriesText)
     {
         if (seriesText == null) return string.Empty;
+
+        var literal = seriesText.Elements<C.NumericValue>().FirstOrDefault()?.Text;
+        if (literal != null) return literal;
+
         var strRef = seriesText.Elements<C.StringReference>().FirstOrDefault();
         var strCache = strRef?.Elements<C.StringCache>().FirstOrDefault();
         var pt = strCache?.Elements<C.StringPoint>().FirstOrDefault();
@@ -530,11 +549,49 @@ internal static class ChartReader
 
     // ── Position reading ────────────────────────────────────────────────
 
-    private static void ReadPositions(Xdr.TwoCellAnchor anchor, XLChart xlChart)
+    /// <summary>EMU per pixel, the unit the drawing markers and extents are stored in.</summary>
+    private const double EmuPerPixel = 9525;
+
+    private static void ReadAnchor(OpenXmlCompositeElement anchor, XLChart xlChart)
     {
-        ReadMarker(anchor.FromMarker, xlChart.Position);
-        ReadMarker(anchor.ToMarker, xlChart.SecondPosition);
+        switch (anchor)
+        {
+            case Xdr.TwoCellAnchor twoCell:
+                xlChart.Anchor = XLDrawingAnchor.MoveAndSizeWithCells;
+                ReadMarker(twoCell.FromMarker, xlChart.Position);
+                ReadMarker(twoCell.ToMarker, xlChart.SecondPosition);
+                break;
+
+            case Xdr.OneCellAnchor oneCell:
+                xlChart.Anchor = XLDrawingAnchor.MoveWithCells;
+                ReadMarker(oneCell.FromMarker, xlChart.Position);
+                ReadExtent(oneCell.Extent, xlChart);
+                break;
+
+            case Xdr.AbsoluteAnchor absolute:
+                xlChart.Anchor = XLDrawingAnchor.Absolute;
+                if (absolute.Position != null)
+                {
+                    xlChart.Left = ToPixels(absolute.Position.X?.Value);
+                    xlChart.Top = ToPixels(absolute.Position.Y?.Value);
+                }
+
+                ReadExtent(absolute.Extent, xlChart);
+                break;
+        }
     }
+
+    private static void ReadExtent(Xdr.Extent? extent, XLChart xlChart)
+    {
+        if (extent == null)
+            return;
+
+        xlChart.Width = ToPixels(extent.Cx?.Value);
+        xlChart.Height = ToPixels(extent.Cy?.Value);
+    }
+
+    private static int ToPixels(long? emu) =>
+        emu == null ? 0 : (int)System.Math.Round(emu.Value / EmuPerPixel);
 
     private static void ReadMarker(Xdr.MarkerType? marker, IXLDrawingPosition position)
     {

@@ -26,9 +26,9 @@ public class OpenXmlWorkbookBenchmarks
     private const int RowCount = 50_000;
     private const string Ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
-    private string[] _strings = null!;
-    private double[] _numbers = null!;
-    private DateTime[] _dates = null!;
+    private string[] _strings = null;
+    private double[] _numbers = null;
+    private DateTime[] _dates = null;
 
     [GlobalSetup]
     public void Setup()

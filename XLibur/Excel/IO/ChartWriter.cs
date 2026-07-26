@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Packaging;
 using System.Linq;
@@ -38,7 +39,13 @@ internal static class ChartWriter
         {
             var xlChart = (XLChart)chart;
             if (!xlChart.IsNew)
+            {
+                // Charts that already exist in the package are not regenerated — that is what keeps
+                // the parts of their XML that XLibur does not model intact. Only the properties the
+                // caller actually changed are patched into the existing part.
+                ChartPatcher.PatchChart(worksheetPart, xlChart);
                 continue;
+            }
 
             if (IsExtendedType(xlChart.ChartType))
                 WriteExtendedChart(worksheet, cm, worksheetPart, xlChart, context);
@@ -65,6 +72,8 @@ internal static class ChartWriter
         var chartRelId = context.RelIdGenerator.GetNext(RelType.Workbook);
         var chartPart = drawingsPart.AddNewPart<ChartPart>(chartRelId);
         chartPart.ChartSpace = BuildChartSpace(xlChart);
+        // Remembered so that a later save can patch this part instead of regenerating it.
+        xlChart.RelId = chartRelId;
 
         AppendAnchor(worksheetDrawing, xlChart,
             new A.GraphicData(new C.ChartReference { Id = chartRelId })
@@ -414,9 +423,40 @@ internal static class ChartWriter
         }
 
         chart.Append(BuildPlotArea(xlChart));
+
+        var legend = ChartFormatting.BuildLegend(xlChart.LegendInternal);
+        if (legend != null)
+            chart.Append(legend);
+
         chart.Append(new C.PlotVisibleOnly { Val = true });
 
         return new C.ChartSpace(chart);
+    }
+
+    private const uint CatAxisId = 1u;
+    private const uint ValAxisId = 2u;
+    private const uint SerAxisId = 3u;
+    private const uint SecondaryCatAxisId = 4u;
+    private const uint SecondaryValAxisId = 5u;
+
+    /// <summary>
+    /// One chart group to emit into the plot area: a chart type, the series plotted with it, and
+    /// whether those series hang off the secondary value axis.
+    /// </summary>
+    private readonly struct PlotGroup(
+        XLChart chart, XLChartType chartType, List<XLChartSeries> series,
+        bool secondaryAxis, uint indexOffset)
+    {
+        internal XLChart Chart { get; } = chart;
+        internal XLChartType ChartType { get; } = chartType;
+        internal List<XLChartSeries> Series { get; } = series;
+        internal bool SecondaryAxis { get; } = secondaryAxis;
+
+        /// <summary>Added to each series index so that combo charts do not reuse an index.</summary>
+        internal uint IndexOffset { get; } = indexOffset;
+
+        internal uint CatAxisIdOfGroup => SecondaryAxis ? SecondaryCatAxisId : CatAxisId;
+        internal uint ValAxisIdOfGroup => SecondaryAxis ? SecondaryValAxisId : ValAxisId;
     }
 
     private static C.PlotArea BuildPlotArea(XLChart xlChart)
@@ -427,173 +467,237 @@ internal static class ChartWriter
         if (IsBubbleType(xlChart.ChartType))
             return BuildBubblePlotArea(xlChart);
 
-        const uint catAxisId = 1u;
-        const uint valAxisId = 2u;
-        const uint serAxisId = 3u;
-
         var plotArea = new C.PlotArea();
         plotArea.Append(new C.Layout());
 
-        AppendChartElement(plotArea, xlChart.ChartType, xlChart.Series, catAxisId, valAxisId, 0);
+        var groups = BuildPlotGroups(xlChart);
+        foreach (var group in groups)
+            AppendChartElement(plotArea, group);
 
-        if (xlChart.SecondaryChartType.HasValue && xlChart.SecondarySeries.Count > 0)
-        {
-            // Secondary series indices must continue from primary to avoid conflicts
-            AppendChartElement(plotArea, xlChart.SecondaryChartType.Value, xlChart.SecondarySeries,
-                catAxisId, valAxisId, (uint)xlChart.Series.Count);
-        }
-
-        // Axes depend on primary chart type
-        if (IsScatterType(xlChart.ChartType))
-        {
-            // Scatter uses two ValueAxis (X and Y)
-            plotArea.Append(new C.ValueAxis(
-                new C.AxisId { Val = catAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.CrossingAxis { Val = valAxisId }
-            ));
-            plotArea.Append(new C.ValueAxis(
-                new C.AxisId { Val = valAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Left },
-                new C.CrossingAxis { Val = catAxisId }
-            ));
-        }
-        else if (IsSurfaceType(xlChart.ChartType))
-        {
-            plotArea.Append(new C.CategoryAxis(
-                new C.AxisId { Val = catAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.CrossingAxis { Val = valAxisId }
-            ));
-            plotArea.Append(new C.ValueAxis(
-                new C.AxisId { Val = valAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Left },
-                new C.CrossingAxis { Val = catAxisId }
-            ));
-            plotArea.Append(new C.SeriesAxis(
-                new C.AxisId { Val = serAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.CrossingAxis { Val = valAxisId }
-            ));
-        }
-        else
-        {
-            plotArea.Append(new C.CategoryAxis(
-                new C.AxisId { Val = catAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.CrossingAxis { Val = valAxisId }
-            ));
-            plotArea.Append(new C.ValueAxis(
-                new C.AxisId { Val = valAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Left },
-                new C.CrossingAxis { Val = catAxisId }
-            ));
-        }
+        // Every chart group has to precede every axis in CT_PlotArea.
+        AppendAxes(plotArea, xlChart, groups.Exists(g => g.SecondaryAxis));
 
         return plotArea;
     }
 
-    private static void AppendChartElement(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    /// <summary>
+    /// Splits the chart's series into the groups the plot area needs: one per chart type, and one
+    /// more for each chart type that has series bound to the secondary value axis.
+    /// </summary>
+    private static List<PlotGroup> BuildPlotGroups(XLChart xlChart)
     {
-        if (IsAreaType(chartType))
-            AppendAreaChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsLineType(chartType))
-            AppendLineChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsRadarType(chartType))
-            AppendRadarChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsScatterType(chartType))
-            AppendScatterChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsStockType(chartType))
-            AppendStockChart(plotArea, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsSurfaceType(chartType))
-            AppendSurfaceChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
-        else if (IsBar3DType(chartType))
-            AppendBar3DChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
+        var groups = new List<PlotGroup>(4);
+        AddPlotGroups(groups, xlChart, xlChart.ChartType, xlChart.SeriesInternal.Items, 0);
+
+        if (xlChart.SecondaryChartType.HasValue && xlChart.SecondarySeries.Count > 0)
+        {
+            AddPlotGroups(groups, xlChart, xlChart.SecondaryChartType.Value,
+                xlChart.SecondarySeriesInternal.Items, (uint)xlChart.Series.Count);
+        }
+
+        return groups;
+    }
+
+    private static void AddPlotGroups(
+        List<PlotGroup> groups, XLChart xlChart, XLChartType chartType,
+        IReadOnlyList<XLChartSeries> series, uint indexOffset)
+    {
+        if (series.Count == 0)
+            return;
+
+        if (!SupportsSecondaryAxis(chartType))
+        {
+            groups.Add(new PlotGroup(xlChart, chartType, [.. series], secondaryAxis: false, indexOffset));
+            return;
+        }
+
+        var primary = new List<XLChartSeries>(series.Count);
+        var secondary = new List<XLChartSeries>();
+        foreach (var s in series)
+            (s.UseSecondaryAxis ? secondary : primary).Add(s);
+
+        if (primary.Count > 0)
+            groups.Add(new PlotGroup(xlChart, chartType, primary, secondaryAxis: false, indexOffset));
+        if (secondary.Count > 0)
+            groups.Add(new PlotGroup(xlChart, chartType, secondary, secondaryAxis: true, indexOffset));
+    }
+
+    /// <summary>
+    /// Whether <see cref="IXLChartSeries.UseSecondaryAxis"/> means anything for a chart type. The
+    /// types with two value axes (scatter, bubble), no value axis (pie, doughnut) or a series axis
+    /// (surface) have no secondary value axis to bind to.
+    /// </summary>
+    private static bool SupportsSecondaryAxis(XLChartType ct) =>
+        !IsScatterType(ct) && !IsBubbleType(ct) && !IsSurfaceType(ct)
+        && !IsPieType(ct) && !IsDoughnutType(ct);
+
+    private static void AppendAxes(C.PlotArea plotArea, XLChart xlChart, bool hasSecondaryAxis)
+    {
+        var primaryChartType = xlChart.ChartType;
+        var horizontal = xlChart.CategoryAxisInternal;
+        var vertical = xlChart.ValueAxisInternal;
+
+        if (IsScatterType(primaryChartType))
+        {
+            // Scatter uses two ValueAxis (X and Y)
+            plotArea.Append(BuildValueAxis(CatAxisId, ValAxisId, C.AxisPositionValues.Bottom, horizontal));
+            plotArea.Append(BuildValueAxis(ValAxisId, CatAxisId, C.AxisPositionValues.Left, vertical));
+        }
+        else if (IsSurfaceType(primaryChartType))
+        {
+            plotArea.Append(BuildCategoryAxis(CatAxisId, ValAxisId, horizontal));
+            plotArea.Append(BuildValueAxis(ValAxisId, CatAxisId, C.AxisPositionValues.Left, vertical));
+            plotArea.Append(new C.SeriesAxis(
+                new C.AxisId { Val = SerAxisId },
+                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
+                new C.Delete { Val = false },
+                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
+                new C.CrossingAxis { Val = ValAxisId }
+            ));
+        }
         else
-            AppendBarChart(plotArea, chartType, seriesCollection, catAxisId, valAxisId, indexOffset);
+        {
+            plotArea.Append(BuildCategoryAxis(CatAxisId, ValAxisId, horizontal));
+            plotArea.Append(BuildValueAxis(ValAxisId, CatAxisId, C.AxisPositionValues.Left, vertical));
+        }
+
+        if (!hasSecondaryAxis)
+            return;
+
+        // The secondary group needs its own axis pair. Excel hides the extra category axis and puts
+        // the extra value axis on the right, crossing the category axis at its maximum.
+        plotArea.Append(BuildCategoryAxis(SecondaryCatAxisId, SecondaryValAxisId,
+            model: null, deleted: true));
+        plotArea.Append(BuildValueAxis(SecondaryValAxisId, SecondaryCatAxisId,
+            C.AxisPositionValues.Right, xlChart.SecondaryValueAxisInternal, crossesMaximum: true));
+    }
+
+    /// <summary>
+    /// Builds a <c>c:catAx</c>. Its children follow the CT_CatAx order: identity and position first,
+    /// then the optional gridlines, title and number format, then the crossing axis.
+    /// </summary>
+    /// <param name="axisId">The identifier this axis is known by.</param>
+    /// <param name="crossingAxisId">The identifier of the axis this one crosses.</param>
+    /// <param name="model">
+    /// The axis model to take the optional properties from, or <c>null</c> for the hidden helper axis
+    /// of a secondary group, which has no public counterpart.
+    /// </param>
+    /// <param name="deleted">Whether the axis is hidden regardless of what the model says.</param>
+    private static C.CategoryAxis BuildCategoryAxis(
+        uint axisId, uint crossingAxisId, XLChartAxis? model, bool deleted = false)
+    {
+        var axis = new C.CategoryAxis();
+        axis.Append(new C.AxisId { Val = axisId });
+        axis.Append(model == null
+            ? new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax })
+            : ChartFormatting.BuildScaling(model));
+        axis.Append(new C.Delete { Val = deleted || model is { Visible: false } });
+        axis.Append(new C.AxisPosition { Val = C.AxisPositionValues.Bottom });
+
+        if (model != null)
+            ChartFormatting.AppendAxisBody(axis, model);
+
+        axis.Append(new C.CrossingAxis { Val = crossingAxisId });
+        return axis;
+    }
+
+    private static C.ValueAxis BuildValueAxis(
+        uint axisId, uint crossingAxisId, C.AxisPositionValues position, XLChartAxis model,
+        bool crossesMaximum = false)
+    {
+        var axis = new C.ValueAxis();
+        axis.Append(new C.AxisId { Val = axisId });
+        axis.Append(ChartFormatting.BuildScaling(model));
+        axis.Append(new C.Delete { Val = !model.Visible });
+        axis.Append(new C.AxisPosition { Val = position });
+
+        ChartFormatting.AppendAxisBody(axis, model);
+
+        axis.Append(new C.CrossingAxis { Val = crossingAxisId });
+        if (crossesMaximum)
+            axis.Append(new C.Crosses { Val = C.CrossesValues.Maximum });
+
+        ChartFormatting.AppendAxisUnits(axis, model);
+        return axis;
+    }
+
+    private static void AppendChartElement(C.PlotArea plotArea, PlotGroup group)
+    {
+        var chartType = group.ChartType;
+
+        if (IsAreaType(chartType))
+            AppendAreaChart(plotArea, group);
+        else if (IsLineType(chartType))
+            AppendLineChart(plotArea, group);
+        else if (IsRadarType(chartType))
+            AppendRadarChart(plotArea, group);
+        else if (IsScatterType(chartType))
+            AppendScatterChart(plotArea, group);
+        else if (IsStockType(chartType))
+            AppendStockChart(plotArea, group);
+        else if (IsSurfaceType(chartType))
+            AppendSurfaceChart(plotArea, group);
+        else if (IsBar3DType(chartType))
+            AppendBar3DChart(plotArea, group);
+        else
+            AppendBarChart(plotArea, group);
     }
 
     // ── Pie / Doughnut (no axes) ──
 
     private static C.PlotArea BuildNoAxesPlotArea(XLChart xlChart)
     {
-        OpenXmlCompositeElement chartElement;
+        var isDoughnut = IsDoughnutType(xlChart.ChartType);
+        OpenXmlCompositeElement chartElement = isDoughnut
+            ? new C.DoughnutChart()
+            : new C.PieChart();
 
-        if (IsDoughnutType(xlChart.ChartType))
+        foreach (var s in xlChart.SeriesInternal.Items)
         {
-            var doughnut = new C.DoughnutChart();
-            foreach (var s in xlChart.Series)
+            var series = new C.PieChartSeries
             {
-                var series = new C.PieChartSeries
-                {
-                    Index = new C.Index { Val = s.Index },
-                    Order = new C.Order { Val = s.Order },
-                    SeriesText = BuildSeriesText(s)
-                };
-                AppendCatAndVal(series, s);
-                doughnut.Append(series);
-            }
-            chartElement = doughnut;
+                Index = new C.Index { Val = s.Index },
+                Order = new C.Order { Val = s.Order },
+                SeriesText = BuildSeriesText(s)
+            };
+            AppendShapeProperties(series, s);
+            AppendSeriesDataLabels(series, s, xlChart.ChartType);
+            AppendCatAndVal(series, s);
+            chartElement.Append(series);
         }
-        else
-        {
-            var pie = new C.PieChart();
-            foreach (var s in xlChart.Series)
-            {
-                var series = new C.PieChartSeries
-                {
-                    Index = new C.Index { Val = s.Index },
-                    Order = new C.Order { Val = s.Order },
-                    SeriesText = BuildSeriesText(s)
-                };
-                AppendCatAndVal(series, s);
-                pie.Append(series);
-            }
-            chartElement = pie;
-        }
+
+        AppendGroupDataLabels(chartElement, xlChart, xlChart.ChartType);
+
+        // c:holeSize is required by CT_DoughnutChart; 75% is the size Excel gives a new doughnut.
+        if (isDoughnut)
+            chartElement.Append(new C.HoleSize { Val = 75 });
 
         return new C.PlotArea(new C.Layout(), chartElement);
     }
 
     // ── Area ──
 
-    private static void AppendAreaChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendAreaChart(C.PlotArea plotArea, PlotGroup group)
     {
         var areaChart = new C.AreaChart
         {
-            Grouping = new C.Grouping { Val = GetAreaGrouping(chartType) }
+            Grouping = new C.Grouping { Val = GetAreaGrouping(group.ChartType) }
         };
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.AreaChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
             areaChart.Append(series);
         }
-        areaChart.Append(new C.AxisId { Val = catAxisId });
-        areaChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(areaChart, group.Chart, group.ChartType);
+        AppendAxisIds(areaChart, group);
         plotArea.Append(areaChart);
     }
 
@@ -608,7 +712,7 @@ internal static class ChartWriter
         const uint yAxisId = 2u;
 
         var bubbleChart = new C.BubbleChart();
-        foreach (var s in xlChart.Series)
+        foreach (var s in xlChart.SeriesInternal.Items)
         {
             var series = new C.BubbleChartSeries
             {
@@ -616,253 +720,242 @@ internal static class ChartWriter
                 Order = new C.Order { Val = s.Order },
                 SeriesText = BuildSeriesText(s)
             };
-            if (!string.IsNullOrWhiteSpace(s.CategoryReferences))
-            {
-                series.Append(new C.XValues(
-                    new C.NumberReference { Formula = new C.Formula(s.CategoryReferences) }
-                ));
-            }
-            series.Append(new C.YValues(
-                new C.NumberReference { Formula = new C.Formula(s.ValueReferences) }
-            ));
+            AppendShapeProperties(series, s);
+            AppendSeriesDataLabels(series, s, xlChart.ChartType);
+            AppendXAndY(series, s);
             series.Append(new C.BubbleSize(
                 new C.NumberReference { Formula = new C.Formula(s.ValueReferences) }
             ));
             bubbleChart.Append(series);
         }
+        AppendGroupDataLabels(bubbleChart, xlChart, xlChart.ChartType);
         bubbleChart.Append(new C.AxisId { Val = xAxisId });
         bubbleChart.Append(new C.AxisId { Val = yAxisId });
 
         var plotArea = new C.PlotArea(
             new C.Layout(),
             bubbleChart,
-            new C.ValueAxis(
-                new C.AxisId { Val = xAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Bottom },
-                new C.CrossingAxis { Val = yAxisId }
-            ),
-            new C.ValueAxis(
-                new C.AxisId { Val = yAxisId },
-                new C.Scaling(new C.Orientation { Val = C.OrientationValues.MinMax }),
-                new C.Delete { Val = false },
-                new C.AxisPosition { Val = C.AxisPositionValues.Left },
-                new C.CrossingAxis { Val = xAxisId }
-            )
+            BuildValueAxis(xAxisId, yAxisId, C.AxisPositionValues.Bottom, xlChart.CategoryAxisInternal),
+            BuildValueAxis(yAxisId, xAxisId, C.AxisPositionValues.Left, xlChart.ValueAxisInternal)
         );
         return plotArea;
     }
 
     // ── Bar/Column ──
 
-    private static void AppendBarChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendBarChart(C.PlotArea plotArea, PlotGroup group)
     {
-        var bp = new BarParams(chartType);
+        var bp = new BarParams(group.ChartType);
         var barChart = new C.BarChart
         {
             BarDirection = new C.BarDirection { Val = bp.Direction },
             BarGrouping = new C.BarGrouping { Val = bp.Grouping }
         };
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.BarChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
             barChart.Append(series);
         }
-        barChart.Append(new C.AxisId { Val = catAxisId });
-        barChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(barChart, group.Chart, group.ChartType);
+        AppendAxisIds(barChart, group);
         plotArea.Append(barChart);
     }
 
     // ── Bar3D (Cone, Cylinder, Pyramid, Column3D, 3D Bar variants) ──
 
-    private static void AppendBar3DChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendBar3DChart(C.PlotArea plotArea, PlotGroup group)
     {
-        var bp = new BarParams(chartType);
+        var bp = new BarParams(group.ChartType);
         var bar3DChart = new C.Bar3DChart
         {
             BarDirection = new C.BarDirection { Val = bp.Direction },
             BarGrouping = new C.BarGrouping { Val = bp.Grouping }
         };
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.BarChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
             bar3DChart.Append(series);
         }
-        bar3DChart.Append(new C.Shape { Val = GetBar3DShape(chartType) });
-        bar3DChart.Append(new C.AxisId { Val = catAxisId });
-        bar3DChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(bar3DChart, group.Chart, group.ChartType);
+        bar3DChart.Append(new C.Shape { Val = GetBar3DShape(group.ChartType) });
+        AppendAxisIds(bar3DChart, group);
         plotArea.Append(bar3DChart);
     }
 
     // ── Line ──
 
-    private static void AppendLineChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendLineChart(C.PlotArea plotArea, PlotGroup group)
     {
         var lineChart = new C.LineChart
         {
-            Grouping = new C.Grouping { Val = GetLineGrouping(chartType) }
+            Grouping = new C.Grouping { Val = GetLineGrouping(group.ChartType) }
         };
-        foreach (var s in seriesCollection)
+        var markersByChartType = group.ChartType is XLChartType.LineWithMarkers
+            or XLChartType.LineWithMarkersStacked
+            or XLChartType.LineWithMarkersStacked100Percent;
+
+        foreach (var s in group.Series)
         {
             var series = new C.LineChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendMarker(series, s, markersByChartType);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
-            if (chartType is XLChartType.LineWithMarkers
-                or XLChartType.LineWithMarkersStacked
-                or XLChartType.LineWithMarkersStacked100Percent)
-            {
-                series.Append(new C.Marker { Symbol = new C.Symbol { Val = C.MarkerStyleValues.Auto } });
-            }
+            AppendSmooth(series, s, smoothByChartType: false);
             lineChart.Append(series);
         }
-        lineChart.Append(new C.AxisId { Val = catAxisId });
-        lineChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(lineChart, group.Chart, group.ChartType);
+        AppendAxisIds(lineChart, group);
         plotArea.Append(lineChart);
     }
 
     // ── Radar ──
 
-    private static void AppendRadarChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendRadarChart(C.PlotArea plotArea, PlotGroup group)
     {
         var radarChart = new C.RadarChart
         {
             RadarStyle = new C.RadarStyle
             {
-                Val = chartType == XLChartType.RadarFilled ? C.RadarStyleValues.Filled : C.RadarStyleValues.Marker
+                Val = group.ChartType == XLChartType.RadarFilled
+                    ? C.RadarStyleValues.Filled
+                    : C.RadarStyleValues.Marker
             }
         };
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.RadarChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendMarker(series, s, autoSymbol: false);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
             radarChart.Append(series);
         }
-        radarChart.Append(new C.AxisId { Val = catAxisId });
-        radarChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(radarChart, group.Chart, group.ChartType);
+        AppendAxisIds(radarChart, group);
         plotArea.Append(radarChart);
     }
 
     // ── Scatter ──
 
-    private static void AppendScatterChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint xAxisId, uint yAxisId, uint indexOffset)
+    private static void AppendScatterChart(C.PlotArea plotArea, PlotGroup group)
     {
         var scatterChart = new C.ScatterChart
         {
-            ScatterStyle = new C.ScatterStyle { Val = GetScatterStyle(chartType) }
+            ScatterStyle = new C.ScatterStyle { Val = GetScatterStyle(group.ChartType) }
         };
-        foreach (var s in seriesCollection)
+        var smoothByChartType = group.ChartType is XLChartType.XYScatterSmoothLinesNoMarkers
+            or XLChartType.XYScatterSmoothLinesWithMarkers;
+
+        foreach (var s in group.Series)
         {
             var series = new C.ScatterChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendMarker(series, s, autoSymbol: false);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             // Scatter uses XValues + YValues, not CategoryAxisData + Values
-            if (!string.IsNullOrWhiteSpace(s.CategoryReferences))
-            {
-                series.Append(new C.XValues(
-                    new C.NumberReference { Formula = new C.Formula(s.CategoryReferences) }
-                ));
-            }
-            series.Append(new C.YValues(
-                new C.NumberReference { Formula = new C.Formula(s.ValueReferences) }
-            ));
+            AppendXAndY(series, s);
+            AppendSmooth(series, s, smoothByChartType);
             scatterChart.Append(series);
         }
-        scatterChart.Append(new C.AxisId { Val = xAxisId });
-        scatterChart.Append(new C.AxisId { Val = yAxisId });
+        AppendGroupDataLabels(scatterChart, group.Chart, group.ChartType);
+        AppendAxisIds(scatterChart, group);
         plotArea.Append(scatterChart);
     }
 
     // ── Stock ──
 
-    private static void AppendStockChart(
-        C.PlotArea plotArea, IXLChartSeriesCollection seriesCollection,
-        uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendStockChart(C.PlotArea plotArea, PlotGroup group)
     {
         var stockChart = new C.StockChart();
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.LineChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
+            AppendMarker(series, s, autoSymbol: false);
+            AppendSeriesDataLabels(series, s, group.ChartType);
             AppendCatAndVal(series, s);
+            AppendSmooth(series, s, smoothByChartType: false);
             stockChart.Append(series);
         }
-        stockChart.Append(new C.AxisId { Val = catAxisId });
-        stockChart.Append(new C.AxisId { Val = valAxisId });
+        AppendGroupDataLabels(stockChart, group.Chart, group.ChartType);
+        AppendAxisIds(stockChart, group);
         plotArea.Append(stockChart);
     }
 
     // ── Surface ──
 
-    private static void AppendSurfaceChart(
-        C.PlotArea plotArea, XLChartType chartType,
-        IXLChartSeriesCollection seriesCollection, uint catAxisId, uint valAxisId, uint indexOffset)
+    private static void AppendSurfaceChart(C.PlotArea plotArea, PlotGroup group)
     {
-        const uint serAxisId = 3u;
-        var wireframe = chartType is XLChartType.SurfaceWireframe or XLChartType.SurfaceContourWireframe;
+        var wireframe = group.ChartType is XLChartType.SurfaceWireframe
+            or XLChartType.SurfaceContourWireframe;
 
         var surfaceChart = new C.SurfaceChart();
         if (wireframe)
             surfaceChart.Append(new C.Wireframe { Val = true });
 
-        foreach (var s in seriesCollection)
+        foreach (var s in group.Series)
         {
             var series = new C.SurfaceChartSeries
             {
-                Index = new C.Index { Val = s.Index + indexOffset },
-                Order = new C.Order { Val = s.Order + indexOffset },
+                Index = new C.Index { Val = s.Index + group.IndexOffset },
+                Order = new C.Order { Val = s.Order + group.IndexOffset },
                 SeriesText = BuildSeriesText(s)
             };
+            AppendShapeProperties(series, s);
             AppendCatAndVal(series, s);
             surfaceChart.Append(series);
         }
-        surfaceChart.Append(new C.AxisId { Val = catAxisId });
-        surfaceChart.Append(new C.AxisId { Val = valAxisId });
-        surfaceChart.Append(new C.AxisId { Val = serAxisId });
+        AppendAxisIds(surfaceChart, group);
+        surfaceChart.Append(new C.AxisId { Val = SerAxisId });
         plotArea.Append(surfaceChart);
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────
 
-    private static void AppendCatAndVal(OpenXmlCompositeElement series, IXLChartSeries s)
+    private static void AppendAxisIds(OpenXmlCompositeElement chartElement, PlotGroup group)
+    {
+        chartElement.Append(new C.AxisId { Val = group.CatAxisIdOfGroup });
+        chartElement.Append(new C.AxisId { Val = group.ValAxisIdOfGroup });
+    }
+
+    private static void AppendCatAndVal(OpenXmlCompositeElement series, XLChartSeries s)
     {
         if (!string.IsNullOrWhiteSpace(s.CategoryReferences))
         {
@@ -875,13 +968,74 @@ internal static class ChartWriter
         ));
     }
 
-    private static C.SeriesText BuildSeriesText(IXLChartSeries s) =>
-        new(new C.StringReference(
-            new C.StringCache(
-                new C.PointCount { Val = 1 },
-                new C.StringPoint(new C.NumericValue(s.Name)) { Index = 0 }
-            )
+    private static void AppendXAndY(OpenXmlCompositeElement series, XLChartSeries s)
+    {
+        if (!string.IsNullOrWhiteSpace(s.CategoryReferences))
+        {
+            series.Append(new C.XValues(
+                new C.NumberReference { Formula = new C.Formula(s.CategoryReferences) }
+            ));
+        }
+        series.Append(new C.YValues(
+            new C.NumberReference { Formula = new C.Formula(s.ValueReferences) }
         ));
+    }
+
+    private static void AppendShapeProperties(OpenXmlCompositeElement series, XLChartSeries s)
+    {
+        var shapeProperties = ChartFormatting.BuildSeriesShapeProperties(s);
+        if (shapeProperties != null)
+            series.Append(shapeProperties);
+    }
+
+    private static void AppendMarker(OpenXmlCompositeElement series, XLChartSeries s, bool autoSymbol)
+    {
+        var marker = ChartFormatting.BuildMarker(s, autoSymbol);
+        if (marker != null)
+            series.Append(marker);
+    }
+
+    private static void AppendSmooth(OpenXmlCompositeElement series, XLChartSeries s, bool smoothByChartType)
+    {
+        var smooth = ChartFormatting.BuildSmooth(s, smoothByChartType);
+        if (smooth != null)
+            series.Append(smooth);
+    }
+
+    /// <summary>
+    /// Appends the series' own <c>c:dLbls</c>. Must be called after <c>c:marker</c> and before
+    /// <c>c:cat</c>/<c>c:val</c>.
+    /// </summary>
+    private static void AppendSeriesDataLabels(
+        OpenXmlCompositeElement series, XLChartSeries s, XLChartType chartType)
+    {
+        var dataLabels = ChartFormatting.BuildDataLabels(s.DataLabelsInternal, chartType);
+        if (dataLabels != null)
+            series.Append(dataLabels);
+    }
+
+    /// <summary>
+    /// Appends the chart-wide <c>c:dLbls</c> to a chart group. Must be called after every
+    /// <c>c:ser</c> and before the group's remaining children.
+    /// </summary>
+    private static void AppendGroupDataLabels(
+        OpenXmlCompositeElement chartElement, XLChart xlChart, XLChartType chartType)
+    {
+        var dataLabels = ChartFormatting.BuildDataLabels(xlChart.DataLabelsInternal, chartType);
+        if (dataLabels != null)
+            chartElement.Append(dataLabels);
+    }
+
+    /// <summary>
+    /// Writes the series name as the literal <c>&lt;c:tx&gt;&lt;c:v&gt;</c> form. The alternative,
+    /// <c>c:strRef</c>, is for names that come from a cell and requires a <c>c:f</c> formula, which
+    /// a literal name does not have.
+    /// </summary>
+    private static C.SeriesText BuildSeriesText(XLChartSeries s) =>
+        new(new C.NumericValue(s.Name));
+
+    /// <summary>EMU per pixel, the unit the drawing markers and extents are stored in.</summary>
+    private const double EmuPerPixel = 9525;
 
     private static void AppendAnchor(Xdr.WorksheetDrawing worksheetDrawing, XLChart xlChart, A.GraphicData graphicData)
     {
@@ -890,39 +1044,69 @@ internal static class ChartWriter
             ? (UInt32Value)nvps.Max(p => p.Id!.Value) + 1
             : 1U;
 
-        var fromPos = xlChart.Position;
-        var toPos = xlChart.SecondPosition;
-
-        var anchor = new Xdr.TwoCellAnchor(
-            new Xdr.FromMarker
-            {
-                ColumnId = new Xdr.ColumnId(fromPos.Column.ToString()),
-                RowId = new Xdr.RowId(fromPos.Row.ToString()),
-                ColumnOffset = new Xdr.ColumnOffset(((long)(fromPos.ColumnOffset * 9525)).ToString()),
-                RowOffset = new Xdr.RowOffset(((long)(fromPos.RowOffset * 9525)).ToString())
-            },
-            new Xdr.ToMarker
-            {
-                ColumnId = new Xdr.ColumnId(toPos.Column.ToString()),
-                RowId = new Xdr.RowId(toPos.Row.ToString()),
-                ColumnOffset = new Xdr.ColumnOffset(((long)(toPos.ColumnOffset * 9525)).ToString()),
-                RowOffset = new Xdr.RowOffset(((long)(toPos.RowOffset * 9525)).ToString())
-            },
-            new Xdr.GraphicFrame(
-                new Xdr.NonVisualGraphicFrameProperties(
-                    new Xdr.NonVisualDrawingProperties { Id = nvpId, Name = xlChart.Name },
-                    new Xdr.NonVisualGraphicFrameDrawingProperties()
-                ),
-                new Xdr.Transform(
-                    new A.Offset { X = 0, Y = 0 },
-                    new A.Extents { Cx = 0, Cy = 0 }
-                ),
-                new A.Graphic(graphicData)
+        var graphicFrame = new Xdr.GraphicFrame(
+            new Xdr.NonVisualGraphicFrameProperties(
+                new Xdr.NonVisualDrawingProperties { Id = nvpId, Name = xlChart.Name },
+                new Xdr.NonVisualGraphicFrameDrawingProperties()
             ),
-            new Xdr.ClientData()
+            new Xdr.Transform(
+                new A.Offset { X = 0, Y = 0 },
+                new A.Extents { Cx = 0, Cy = 0 }
+            ),
+            new A.Graphic(graphicData)
         );
+
+        OpenXmlCompositeElement anchor = xlChart.Anchor switch
+        {
+            XLDrawingAnchor.MoveWithCells => new Xdr.OneCellAnchor(
+                BuildFromMarker(xlChart.Position),
+                BuildExtent(xlChart),
+                graphicFrame,
+                new Xdr.ClientData()),
+
+            XLDrawingAnchor.Absolute => new Xdr.AbsoluteAnchor(
+                new Xdr.Position
+                {
+                    X = ToEmu(xlChart.Left),
+                    Y = ToEmu(xlChart.Top)
+                },
+                BuildExtent(xlChart),
+                graphicFrame,
+                new Xdr.ClientData()),
+
+            _ => new Xdr.TwoCellAnchor(
+                BuildFromMarker(xlChart.Position),
+                BuildToMarker(xlChart.SecondPosition),
+                graphicFrame,
+                new Xdr.ClientData())
+        };
+
         worksheetDrawing.Append(anchor);
     }
+
+    private static Xdr.FromMarker BuildFromMarker(IXLDrawingPosition position) => new()
+    {
+        ColumnId = new Xdr.ColumnId(position.Column.ToString()),
+        RowId = new Xdr.RowId(position.Row.ToString()),
+        ColumnOffset = new Xdr.ColumnOffset(ToEmu(position.ColumnOffset).ToString()),
+        RowOffset = new Xdr.RowOffset(ToEmu(position.RowOffset).ToString())
+    };
+
+    private static Xdr.ToMarker BuildToMarker(IXLDrawingPosition position) => new()
+    {
+        ColumnId = new Xdr.ColumnId(position.Column.ToString()),
+        RowId = new Xdr.RowId(position.Row.ToString()),
+        ColumnOffset = new Xdr.ColumnOffset(ToEmu(position.ColumnOffset).ToString()),
+        RowOffset = new Xdr.RowOffset(ToEmu(position.RowOffset).ToString())
+    };
+
+    private static Xdr.Extent BuildExtent(XLChart xlChart) => new()
+    {
+        Cx = ToEmu(xlChart.Width),
+        Cy = ToEmu(xlChart.Height)
+    };
+
+    private static long ToEmu(double pixels) => (long)(pixels * EmuPerPixel);
 
     /// <summary>
     /// Appends a TwoCellAnchor for an extended chart, wrapping the GraphicFrame in mc:AlternateContent

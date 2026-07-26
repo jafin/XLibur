@@ -72,21 +72,24 @@ jobs:
           /o:"xlibur"
           /d:sonar.token="$SONAR_TOKEN"
           /d:sonar.host.url="https://sonarcloud.io"
-          /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+          /d:sonar.cs.vscoveragexml.reportsPaths="**/coverage.xml"
           /d:sonar.coverage.exclusions="XLibur.Examples/**,XLibur.Benchmarks/**"
 
       - name: Build
         run: dotnet build XLibur.slnx --configuration Release --no-restore
 
+      # The suites run on TUnit / Microsoft.Testing.Platform. global.json opts `dotnet test`
+      # into the MTP runner, so coverage and TRX options are passed straight through rather
+      # than via VSTest data collectors. Coverlet is not compatible with MTP; coverage comes
+      # from Microsoft.Testing.Extensions.CodeCoverage in the VS XML format SonarCloud reads.
       - name: Test
         run: >
           dotnet test XLibur.Tests/XLibur.Tests.csproj
           --configuration Release
           --no-build
           --framework net10.0
-          --logger "trx;LogFileName=test-results.trx"
-          --collect:"XPlat Code Coverage"
-          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+          --report-trx --report-trx-filename test-results.trx
+          --coverage --coverage-output-format xml --coverage-output coverage.xml
 
       - name: Test Fonts.SixLabors
         run: >
@@ -94,7 +97,7 @@ jobs:
           --configuration Release
           --no-build
           --framework net10.0
-          --logger "trx;LogFileName=fonts-test-results.trx"
+          --report-trx --report-trx-filename fonts-test-results.trx
 
       - name: Test Fonts.SkiaSharp
         run: >
@@ -102,7 +105,7 @@ jobs:
           --configuration Release
           --no-build
           --framework net10.0
-          --logger "trx;LogFileName=fonts-skiasharp-test-results.trx"
+          --report-trx --report-trx-filename fonts-skiasharp-test-results.trx
 
       - name: End SonarCloud analysis
         if: env.SONAR_TOKEN != ''
@@ -116,6 +119,5 @@ jobs:
         with:
           name: test-results
           path: |
-            XLibur.Tests/TestResults/*.trx
-            XLibur.Fonts.SixLabors.Tests/TestResults/*.trx
-            XLibur.Fonts.SkiaSharp.Tests/TestResults/*.trx
+            **/TestResults/*.trx
+            **/TestResults/coverage.xml

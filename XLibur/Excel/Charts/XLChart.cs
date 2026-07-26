@@ -39,9 +39,13 @@ internal sealed class XLChart : XLDrawing<IXLChart>, IXLChart
         ZOrder = zOrder;
         ShapeId = worksheet.Workbook.ShapeIdManager.GetNext();
         RightAngleAxes = true;
-        Series = new XLChartSeriesCollection();
-        SecondarySeries = new XLChartSeriesCollection();
+        Series = new XLChartSeriesCollection(this);
+        SecondarySeries = new XLChartSeriesCollection(this, secondary: true);
         SecondPosition = new XLDrawingPosition();
+        DataLabelsInternal = new XLChartDataLabels(this);
+        CategoryAxisInternal = new XLChartAxis(this, XLChartAxisRole.Category);
+        ValueAxisInternal = new XLChartAxis(this, XLChartAxisRole.Value);
+        SecondaryValueAxisInternal = new XLChartAxis(this, XLChartAxisRole.SecondaryValue);
     }
 
     public string? Title { get; set; }
@@ -58,9 +62,46 @@ internal sealed class XLChart : XLDrawing<IXLChart>, IXLChart
 
     public IXLDrawingPosition SecondPosition { get; }
 
+    public XLDrawingAnchor Anchor { get; set; } = XLDrawingAnchor.MoveAndSizeWithCells;
+
+    public int Width { get; set; }
+
+    public int Height { get; set; }
+
+    public int Left { get; set; }
+
+    public int Top { get; set; }
+
     public XLChartType? SecondaryChartType { get; set; }
 
     public IXLChartSeriesCollection SecondarySeries { get; }
+
+    public IXLDataLabels DataLabels => DataLabelsInternal;
+
+    /// <summary>
+    /// The chart-wide data labels, typed for internal use.
+    /// </summary>
+    internal XLChartDataLabels DataLabelsInternal { get; }
+
+    public IXLChartLegend Legend => LegendInternal;
+
+    /// <summary>The chart's legend, typed for internal use.</summary>
+    internal XLChartLegend LegendInternal { get; } = new();
+
+    public IXLChartAxis CategoryAxis => CategoryAxisInternal;
+
+    public IXLChartAxis ValueAxis => ValueAxisInternal;
+
+    public IXLChartAxis SecondaryValueAxis => SecondaryValueAxisInternal;
+
+    /// <summary>The horizontal axis, typed for internal use.</summary>
+    internal XLChartAxis CategoryAxisInternal { get; }
+
+    /// <summary>The vertical value axis, typed for internal use.</summary>
+    internal XLChartAxis ValueAxisInternal { get; }
+
+    /// <summary>The right-hand value axis, typed for internal use.</summary>
+    internal XLChartAxis SecondaryValueAxisInternal { get; }
 
     /// <summary>
     /// The relationship ID linking this chart to its ChartPart within the DrawingsPart.
@@ -73,6 +114,23 @@ internal sealed class XLChart : XLDrawing<IXLChart>, IXLChart
     /// ChartWriter only writes charts where this is <c>true</c>.
     /// </summary>
     internal bool IsNew { get; set; } = true;
+
+    /// <summary>
+    /// Whether this chart came out of an existing file. Unlike <see cref="IsNew"/> — which the writer
+    /// clears once a new chart has been emitted — this stays <c>true</c> for the lifetime of the chart
+    /// and gates the operations that would require regenerating the chart XML from scratch.
+    /// </summary>
+    internal bool LoadedFromFile { get; set; }
+
+    /// <summary>
+    /// The primary series collection, typed for internal use.
+    /// </summary>
+    internal XLChartSeriesCollection SeriesInternal => (XLChartSeriesCollection)Series;
+
+    /// <summary>
+    /// The secondary (combo) series collection, typed for internal use.
+    /// </summary>
+    internal XLChartSeriesCollection SecondarySeriesInternal => (XLChartSeriesCollection)SecondarySeries;
 
     public bool RightAngleAxes { get; set; }
 

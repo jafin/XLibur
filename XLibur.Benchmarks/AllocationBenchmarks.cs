@@ -67,10 +67,10 @@ public class AllocationBenchmarks
         "E10-F20/G30", "AVERAGE(H1:H50)", "\"literal:A1\"&B2", "C5*D5+E5", "MAX(A1:Z1)", "MIN(B2:B200)",
     ];
 
-    private XLWorkbook _workbook = null!;
-    private XLWorksheet _worksheet = null!;
-    private XLRange _shiftRange = null!;
-    private XLCell[] _emptyCells = null!;
+    private XLWorkbook _workbook = null;
+    private XLWorksheet _worksheet = null;
+    private XLRange _shiftRange = null;
+    private XLCell[] _emptyCells = null;
 
     [GlobalSetup]
     public void Setup()

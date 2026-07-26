@@ -241,8 +241,25 @@ internal readonly struct ScalarValue
         //        4 '#,##0.00'
         //       11 '0.00E+00'
         //       48 '##0.0E+0'
-        if (double.TryParse(text, NumberStyles.Any, culture, out var number))
+        if (NumberParser.TryParse(text, culture, out var number))
             return number;
+
+        // Excel allows whitespace between the sign and the number ('- 100 %'), .NET parse methods
+        // don't. Only reached once the parse above has already refused the text as it stands.
+        var withoutSignWhitespace = RemoveWhitespaceAfterLeadingSign(text, culture);
+        if (withoutSignWhitespace is not null)
+            return TextToNumber(withoutSignWhitespace, culture);
+
+        // Excel reads a value in braces as negative even when the braces contain whitespace or a
+        // percent sign, neither of which NumberStyles.AllowParentheses accepts.
+        var bracketedValue = RemoveNegatingBraces(text, culture);
+        if (bracketedValue is not null)
+        {
+            return TextToNumber(bracketedValue, culture)
+                .TryPickT0(out var bracketedNumber, out var bracketedError)
+                ? -bracketedNumber
+                : bracketedError;
+        }
 
         // Percents. Percent sign can be at both sides.
         // Format 9 '0%'
@@ -282,9 +299,80 @@ internal readonly struct ScalarValue
             // other formats don't use '%' sign, but text has it, so just stop for invalid inputs like 'hundred%'
             return XLError.IncompatibleValue;
         }
+
+        // Returns the text with the whitespace between a leading sign and the value removed, or null
+        // when there is no leading sign or no whitespace behind it.
+        static string? RemoveWhitespaceAfterLeadingSign(string text, CultureInfo c)
+        {
+            var signStart = SkipSpaces(text, 0);
+            var signLength = MatchSign(text, signStart, c);
+            if (signLength == 0)
+                return null;
+
+            var valueStart = SkipSpaces(text, signStart + signLength);
+            return valueStart == signStart + signLength
+                ? null
+                : text.Substring(0, signStart + signLength) + text.Substring(valueStart);
+        }
+
+        // Returns the content of the braces, or null when the text isn't braced. A sign inside the
+        // braces is rejected, because in Excel the braces themselves are the sign ('(-1)' is not a
+        // number, neither is '-(1)').
+        static string? RemoveNegatingBraces(string text, CultureInfo c)
+        {
+            var start = SkipSpaces(text, 0);
+            var end = text.Length - 1;
+            while (end >= 0 && text[end] == ' ')
+                end--;
+
+            if (start >= end || text[start] != '(' || text[end] != ')')
+                return null;
+
+            var content = text.Substring(start + 1, end - start - 1);
+            return MatchSign(content, SkipSpaces(content, 0), c) != 0 ? null : content;
+        }
+
+        static int SkipSpaces(string text, int index)
+        {
+            while (index < text.Length && text[index] == ' ')
+                index++;
+
+            return index;
+        }
+
+        // Length of the culture's positive or negative sign at the index, or 0 if neither is there.
+        static int MatchSign(string text, int index, CultureInfo c)
+        {
+            var negativeSign = c.NumberFormat.NegativeSign;
+            if (MatchesAt(text, index, negativeSign))
+                return negativeSign.Length;
+
+            var positiveSign = c.NumberFormat.PositiveSign;
+            return MatchesAt(text, index, positiveSign) ? positiveSign.Length : 0;
+        }
+
+        static bool MatchesAt(string text, int index, string value)
+        {
+            return value.Length > 0 &&
+                   index + value.Length <= text.Length &&
+                   string.CompareOrdinal(text, index, value, 0, value.Length) == 0;
+        }
     }
 
     public static bool ToSerialDateTime(string text, CultureInfo culture, out double serialDateTime)
+    {
+        if (TryParseDatePatterns(text, culture, out serialDateTime))
+            return true;
+
+        // Excel accepts a month name of anything from three letters up to the full name ('1-marc'),
+        // while .NET recognizes only the exact abbreviation or the exact full name. Expand the prefix
+        // to a name .NET knows and try once more. Done as a second pass so that every input the
+        // patterns already handle keeps taking the untouched path above.
+        var expandedMonthName = DateTimeParser.ExpandMonthNamePrefix(text, culture);
+        return expandedMonthName is not null && TryParseDatePatterns(expandedMonthName, culture, out serialDateTime);
+    }
+
+    private static bool TryParseDatePatterns(string text, CultureInfo culture, out double serialDateTime)
     {
         const DateTimeStyles dateStyle = DateTimeStyles.NoCurrentDateDefault | DateTimeStyles.AllowInnerWhite | DateTimeStyles.AllowTrailingWhite;
 
@@ -296,9 +384,26 @@ internal readonly struct ScalarValue
             return ToSerialDate(dateFormat14Or22, out serialDateTime);
         }
 
+        // Excel lets one component of the time overflow its normal range and carries the excess into
+        // the date, e.g. '11/30/2022 24:59' is one minute to one in the morning of December 1st. No
+        // DateTime pattern can express that, so split the text and let TimeSpanParser, which already
+        // models Excel's overflow rules, handle the time half.
+        if (TryParseDateWithOverflowTime(text, culture, out serialDateTime))
+        {
+            return true;
+        }
+
+        // Whether a leading space is allowed is a property of the individual format, not of the
+        // parser: format 16 accepts ' 1 - apr  ', while formats 15 and 17 reject the same space.
+        // .NET makes no such distinction and allows it everywhere, so the strict formats are guarded.
+        var hasLeadingWhitespace = text.Length > 0 && char.IsWhiteSpace(text[0]);
+
         // Date with names of months. The names of months differ across cultures.
         // Format 15 'd-mmm-yy'
-        if (DateTime.TryParseExact(text, ["d-MMM-yyyy", "d-MMMM-yyyy", "d-MMM-yy", "d-MMMM-yy"], culture, dateStyle, out var dateFormat15))
+        if (!hasLeadingWhitespace &&
+            DateTime.TryParseExact(text, ["d-MMM-yyyy", "d-MMMM-yyyy", "d-MMM-yy", "d-MMMM-yy",
+                                          "d-MMM-yyyy h:m", "d-MMMM-yyyy h:m", "d-MMM-yy h:m", "d-MMMM-yy h:m",
+                                          "d-MMM-yyyy h:m:s", "d-MMMM-yyyy h:m:s", "d-MMM-yy h:m:s", "d-MMMM-yy h:m:s"], culture, dateStyle, out var dateFormat15))
         {
             return ToSerialDate(dateFormat15, out serialDateTime);
         }
@@ -310,10 +415,25 @@ internal readonly struct ScalarValue
             return ToSerialDate(dateFormat16, out serialDateTime);
         }
 
+        // Excel has an extra 'mmm-dd' pattern ahead of 'mmm-yy' in cultures that write the month
+        // before the day, so under en-US 'jan-02' is the second of January of the current year rather
+        // than January 2002. Cultures that write the day first only have the year reading, which is
+        // why cs-CZ reads 'led-5' as January 2005. Parsing happens in year 1 (NoCurrentDateDefault),
+        // so a number that isn't a valid day falls through to the year reading below, and so does
+        // 'feb-29', which no year 1 can hold.
+        if (!hasLeadingWhitespace &&
+            IsMonthBeforeDay(culture) &&
+            DateTime.TryParseExact(text, ["MMM-d", "MMMM-d"], culture, dateStyle, out var dateFormat17AsDay))
+        {
+            var dayInCurrentYear = dateFormat17AsDay.AddYears(DateTime.Now.Year - dateFormat17AsDay.Year);
+            return ToSerialDate(dayInCurrentYear, out serialDateTime);
+        }
+
         // Month and a number. In some cultures, the culture date parsing will interpret this pattern as MMM-dd, but
         // that depends on culture date patterns above. Use MMM and MMMM to encompass both abbreviation and full name.
         // Format 17 'mmm-yy'
-        if (DateTime.TryParseExact(text, ["MMM-y", "MMMM-y"], culture, dateStyle, out var dateFormat17))
+        if (!hasLeadingWhitespace &&
+            DateTime.TryParseExact(text, ["MMM-y", "MMMM-y"], culture, dateStyle, out var dateFormat17))
         {
             if (dateFormat17.Year != DateTime.Now.Year && dateFormat17.Year >= 2030)
                 dateFormat17 = dateFormat17.AddYears(-100);
@@ -341,6 +461,48 @@ internal readonly struct ScalarValue
 
         serialDateTime = default;
         return false;
+
+        static bool TryParseDateWithOverflowTime(string text, CultureInfo culture, out double serialDateTime)
+        {
+            serialDateTime = default;
+
+            // The date and the time are separated by a space, but the date itself may contain spaces
+            // ('aug 10, 2022 14:10'), so every split point has to be tried. Search from the end,
+            // where the time is far more likely to start.
+            for (var i = text.Length - 1; i > 0; i--)
+            {
+                if (text[i] != ' ')
+                    continue;
+
+                var datePart = text.Substring(0, i);
+                var timePart = text.Substring(i + 1);
+                if (timePart.Length == 0)
+                    continue;
+
+                if (!DateTimeParser.TryParseCultureDate(datePart, culture, out var date))
+                    continue;
+
+                if (!TimeSpanParser.TryParseTime(timePart, culture, out var time))
+                    continue;
+
+                if (!ToSerialDate(date, out var serialDate))
+                    return false;
+
+                serialDateTime = serialDate + time.ToSerialDateTime();
+                return true;
+            }
+
+            return false;
+        }
+
+        // Whether the culture writes '3/1' as the first of March or the third of January.
+        static bool IsMonthBeforeDay(CultureInfo c)
+        {
+            var shortDatePattern = c.DateTimeFormat.ShortDatePattern;
+            var monthIndex = shortDatePattern.IndexOf('M');
+            var dayIndex = shortDatePattern.IndexOf('d');
+            return monthIndex >= 0 && dayIndex >= 0 && monthIndex < dayIndex;
+        }
 
         static bool ToSerialDate(DateTime dateTime, out double serialDate)
         {
