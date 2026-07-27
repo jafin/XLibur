@@ -75,7 +75,6 @@ public class LoadingTests
     {
         get
         {
-            // TODO: unpark all files
             var parkedForLater = new[]
             {
                 "TryToLoad.LO.xlsx.column-style-autofilter.xlsx",
@@ -109,7 +108,7 @@ public class LoadingTests
     {
         // Arrange
         var path = TestHelper.GetResourcePath(@"TryToLoad\ValidationWithSheetReference.xlsx");
-        using var stream = TestHelper.GetStreamFromResource(path);
+        await using var stream = TestHelper.GetStreamFromResource(path);
 
         // Act
         using var wb = new XLWorkbook(stream);
